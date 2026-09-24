@@ -59,6 +59,16 @@ function banner(n, duration) {
     setTimeout(remove, duration);
 }
 
+function sanitizeData(value) {
+    if (value === undefined || value === null) return undefined;
+    try {
+        const json = JSON.stringify(value);
+        return json.length <= 4096 ? JSON.parse(json) : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
 export const Notifications = {
     init() {
         bannerLayer = document.getElementById('banners');
@@ -72,7 +82,7 @@ export const Notifications = {
     },
 
     /**
-     * @param {{ appId?: string, title?: string, body?: string, duration?: number }} data
+     * @param {{ appId?: string, title?: string, body?: string, data?: any, duration?: number }} data
      */
     push(data = {}) {
         const app = data.appId ? Apps.get(data.appId) : null;
@@ -90,6 +100,8 @@ export const Notifications = {
             appId: app?.id ?? null,
             title: String(data.title ?? app?.label ?? 'Notification').slice(0, 80),
             body: String(data.body ?? '').slice(0, 280),
+            // opaque payload handed back to the app as launch data when the notification is tapped
+            data: sanitizeData(data.data),
             time: Date.now(),
         };
         list.unshift(n);

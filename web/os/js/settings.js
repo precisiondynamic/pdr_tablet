@@ -5,6 +5,7 @@ import { Bridge } from './bridge.js';
 import { log } from './log.js';
 import { Dialog } from './dialog.js';
 import { Shell } from './shell.js';
+import { AppStorage } from './storage.js';
 import { state, settings, settingsSource, on, updateSettings, resetSettings, ACCENTS, SLIDER_KEYS } from './store.js';
 import { appTile, icon, logoMark } from './icons.js';
 import { WALLPAPERS, wallpaperCss, isSafeUrl } from './wallpapers.js';
@@ -232,9 +233,11 @@ function appsPage() {
             h('div', { class: 'status-title' }, 'No Apps Installed'),
             h('div', { class: 'status-desc' }, 'Compatible resources register their apps automatically when they start.'))];
     }
+    const kb = (bytes) => (bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`);
     return [group(`${apps.length} Installed`, null, apps.map((app) => {
         const running = Apps.isRunning(app.id);
         const pinned = settings.dock.includes(app.id);
+        const stored = AppStorage.size(app.id);
         return row(app.label,
             h('div', { class: 'row-buttons' },
                 h('button', {
@@ -243,13 +246,35 @@ function appsPage() {
                         dock: pinned ? settings.dock.filter((id) => id !== app.id) : [...settings.dock, app.id],
                     }),
                 }, pinned ? 'Unpin' : 'Pin to Dash'),
+                stored > 2 ? h('button', {
+                    class: 'btn',
+                    onClick: async () => {
+                        const ok = await Dialog.confirm({
+                            title: `Clear ${app.label} Data?`,
+                            body: `Removes everything ${app.label} has stored on this tablet (${kb(stored)}). The app is restarted.`,
+                            confirm: 'Clear Data',
+                            destructive: true,
+                        });
+                        if (!ok) return;
+                        Apps.close(app.id);
+                        AppStorage.wipe(app.id);
+                        redrawSettings?.();
+                    },
+                }, 'Clear Data') : null,
                 running ? h('button', { class: 'btn btn-destructive', onClick: () => Apps.close(app.id) }, 'Force Quit') : null),
-            [app.id, running ? 'Running' : null, app.hidden ? 'Hidden' : null].filter(Boolean).join(' · '),
+            [
+                app.bundled ? 'Built-in' : app.id,
+                running ? 'Running' : null,
+                stored > 2 ? `${kb(stored)} stored` : null,
+                app.hidden ? 'Hidden' : null,
+            ].filter(Boolean).join(' · '),
             { prefix: appTile(app, 'tile-sm row-icon') });
     }))];
 }
 
 /* ---- system log (journal viewer) ---- */
+
+let redrawSettings = null;
 
 const LOG_FILTERS = [['all', 'All'], ['info', 'Info'], ['warn', 'Warnings'], ['error', 'Errors']];
 let logFilter = 'all';
@@ -392,6 +417,7 @@ export const SettingsApp = {
             draw(true);
         };
         draw(false);
+        redrawSettings = () => draw(true);
 
         const onMinute = () => { if (current === 'datetime') redraw(); };
         document.addEventListener('pdr:minute', onMinute);

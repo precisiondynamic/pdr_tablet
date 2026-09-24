@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Calculator</title>
+    <!-- Reference app: completely self-contained. No requests, no storage — the SDK is only
+         loaded so the app follows the tablet's theme. -->
+    <link rel="stylesheet" href="../shared/fonts.css">
+    <link rel="stylesheet" href="../shared/kit.css">
+    <link rel="stylesheet" href="calc.css">
+</head>
+<body>
+    <div class="calc">
+        <aside class="calc-history">
+            <div class="calc-history-head">
+                <span>History</span>
+                <button class="btn btn-flat btn-circle" id="clear-history" title="Clear history"></button>
+            </div>
+            <div class="calc-history-list" id="history"></div>
+        </aside>
+        <main class="calc-main">
+            <div class="calc-display">
+                <div class="calc-expr num" id="expr"></div>
+                <div class="calc-result num" id="result">0</div>
+            </div>
+            <div class="calc-keys" id="keys"></div>
+        </main>
+    </div>
+    <script src="../../sdk/pdr-tablet.js"></script>
+    <script src="../shared/kit.js"></script>
+    <script src="calc.js"></script>
+</body>
+</html>

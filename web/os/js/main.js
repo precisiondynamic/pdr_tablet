@@ -2,6 +2,7 @@ import { log } from './log.js';
 import { Bridge } from './bridge.js';
 import { state, setState, settings, settingsSource, updateSettings, VERSION } from './store.js';
 import { Apps } from './apps.js';
+import { Bundled } from './bundled.js';
 import { Calendar } from './calendar.js';
 import { Home } from './home.js';
 import { Menu } from './menu.js';
@@ -11,6 +12,7 @@ import { ControlCenter } from './control.js';
 import { Dialog } from './dialog.js';
 import { SettingsApp } from './settings.js';
 import { Shell } from './shell.js';
+import { AppStorage } from './storage.js';
 import { clamp } from './util.js';
 
 /* ---------- early boot: these lines are what the verbose boot screen prints ---------- */
@@ -44,6 +46,7 @@ start('shell', () => Dialog.init());
 start('shell', () => Calendar.init());
 start('shell', () => Overview.init());
 start('home', () => Home.init());
+Bundled.load();
 
 /* ---------- inbound actions (see docs/PROTOCOL.md) ---------- */
 
@@ -59,6 +62,14 @@ Bridge.on('os:init', (msg) => {
         parts.push(`maxBackgroundApps=${state.maxBackgroundApps}`);
     }
     if (msg.settings && typeof msg.settings === 'object') { updateSettings(msg.settings, { fromHost: true }); parts.push('settings'); }
+    if (msg.appStorage && typeof msg.appStorage === 'object') {
+        for (const [id, data] of Object.entries(msg.appStorage)) AppStorage.seed(id, data);
+        parts.push('app storage');
+    }
+    if (typeof msg.bundledApps === 'boolean' || typeof msg.devApps === 'boolean') {
+        Bundled.configure({ bundledApps: msg.bundledApps, devApps: msg.devApps });
+        parts.push(`bundledApps=${msg.bundledApps !== false} devApps=${!!msg.devApps}`);
+    }
     if (msg.status && typeof msg.status === 'object') { Shell.setStatus(msg.status); parts.push('status'); }
     if (Array.isArray(msg.apps)) { Apps.setAll(msg.apps); parts.push(`${msg.apps.length} apps`); }
     log.ok('bridge', `Host initialised (${parts.join(', ') || 'defaults'}).`);
@@ -80,6 +91,7 @@ Bridge.on('apps:close', (msg) => Apps.close(msg.id));
 Bridge.on('apps:home', () => { Shell.closeOverlays(); Apps.home(); });
 Bridge.on('apps:message', (msg) => Apps.message(msg.id, msg.event, msg.data));
 Bridge.on('apps:badge', (msg) => Apps.setBadge(msg.id, msg.count));
+Bridge.on('apps:storage', (msg) => AppStorage.seed(msg.id, msg.data));
 
 Bridge.on('notify', (msg) => Notifications.push(msg));
 

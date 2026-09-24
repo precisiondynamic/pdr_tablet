@@ -158,6 +158,27 @@
         }
     }
 
+    /** Round-trip to the tablet: resolves with `data`, rejects with the tablet's error. */
+    function call(type, payload, options, label) {
+        if (!inTablet) return Promise.reject(new Error('Not running inside pdr_tablet'));
+        var timeout = (options && options.timeout) || 15000;
+        return new Promise(function (resolve, reject) {
+            var id = ++rid;
+            pending[id] = {
+                resolve: resolve,
+                reject: reject,
+                timer: setTimeout(function () {
+                    if (!pending[id]) return;
+                    delete pending[id];
+                    reject(new Error(label + ' timed out'));
+                }, timeout),
+            };
+            var msg = { rid: id };
+            for (var k in payload) if (Object.prototype.hasOwnProperty.call(payload, k)) msg[k] = payload[k];
+            post(type, msg);
+        });
+    }
+
     function applyTheme() {
         var root = global.document && global.document.documentElement;
         if (!root || !ctx) return;
@@ -252,21 +273,19 @@
          * onRequest handler of the resource that registered this app.
          */
         request: function (action, data, options) {
-            if (!inTablet) return Promise.reject(new Error('Not running inside pdr_tablet'));
-            var timeout = (options && options.timeout) || 15000;
-            return new Promise(function (resolve, reject) {
-                var id = ++rid;
-                pending[id] = {
-                    resolve: resolve,
-                    reject: reject,
-                    timer: setTimeout(function () {
-                        if (!pending[id]) return;
-                        delete pending[id];
-                        reject(new Error('Request "' + action + '" timed out'));
-                    }, timeout),
-                };
-                post('request', { rid: id, action: action, data: data === undefined ? null : data });
-            });
+            return call('request', { action: action, data: data === undefined ? null : data }, options, 'Request "' + action + '"');
+        },
+
+        /**
+         * Per-app key/value storage kept by the tablet (and persisted by the integration).
+         * Values must be JSON-serialisable; each app has a 512 KB quota.
+         */
+        storage: {
+            get: function (key) { return call('storage', { op: 'get', key: key }, null, 'storage.get'); },
+            set: function (key, value) { return call('storage', { op: 'set', key: key, value: value }, null, 'storage.set'); },
+            remove: function (key) { return call('storage', { op: 'remove', key: key }, null, 'storage.remove'); },
+            keys: function () { return call('storage', { op: 'keys' }, null, 'storage.keys'); },
+            clear: function () { return call('storage', { op: 'clear' }, null, 'storage.clear'); },
         },
 
         /** Subscribe: ready | show | hide | launch | settings | message | message:<event>. Returns an unsubscribe fn. */
@@ -291,10 +310,13 @@
         close: function () { post('close'); },
         /** Open another installed app, optionally with launch data. */
         launch: function (appId, data) { post('launch', { id: appId, data: data }); },
-        /** Show a notification from this app. */
-        notify: function (title, body) {
-            if (title && typeof title === 'object') { body = title.body; title = title.title; }
-            post('notify', { title: title, body: body });
+        /**
+         * Show a notification from this app. `data` is handed back as launch data when the user
+         * taps it (a deep link): notify({ title, body, data: { thread: 4 } }).
+         */
+        notify: function (title, body, data) {
+            if (title && typeof title === 'object') { data = title.data; body = title.body; title = title.title; }
+            post('notify', { title: title, body: body, data: data });
         },
         /** Badge count on this app's icon (0 clears it). */
         setBadge: function (count) { post('badge', { count: count }); },

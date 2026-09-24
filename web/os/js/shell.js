@@ -233,7 +233,7 @@ export const Shell = {
         on('notifications', () => { renderLockNotifications(); renderUnread(); });
         on('notification:open', (n) => {
             Shell.closeOverlays();
-            Apps.launch(n.appId);   // deferred until unlock when locked
+            Apps.launch(n.appId, n.data);   // deferred until unlock when locked; data = deep link
             if (state.locked) Shell.unlock();
         });
 

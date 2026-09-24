@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>LSX Crypto</title>
+    <!-- Reference app: the "big" one. Live-updating market UI on a deterministic price engine,
+         a demo wallet in tablet.storage, price-alert notifications with deep links, and a
+         server contract (BACKEND.md) for running it against a real economy. -->
+    <link rel="stylesheet" href="../shared/fonts.css">
+    <link rel="stylesheet" href="../shared/kit.css">
+    <link rel="stylesheet" href="crypto.css">
+</head>
+<body class="is-loading">
+    <div class="cx">
+        <aside class="kit-sidebar cx-sidebar">
+            <div class="cx-brand">
+                <svg class="cx-logo" viewBox="0 0 40 40" aria-hidden="true">
+                    <defs>
+                        <linearGradient id="lsx-g" x1="0" y1="0" x2="1" y2="1">
+                            <stop offset="0" stop-color="#57e389"/>
+                            <stop offset="1" stop-color="#1c71d8"/>
+                        </linearGradient>
+                    </defs>
+                    <path d="M20 2.5 35.2 11.25v17.5L20 37.5 4.8 28.75v-17.5z" fill="url(#lsx-g)"/>
+                    <path d="M12 25.5l5.2-6 4.2 3.6 6.6-9" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <div>
+                    <div class="cx-brand-name">LSX</div>
+                    <div class="cx-brand-sub">Los Santos Exchange</div>
+                </div>
+            </div>
+            <nav class="cx-nav" id="nav"></nav>
+            <div class="cx-account" id="account"></div>
+        </aside>
+        <div class="cx-body">
+            <div class="ticker" id="ticker"></div>
+            <main class="cx-content" id="content">
+                <div class="cx-boot"><span class="cx-spinner"></span></div>
+            </main>
+        </div>
+    </div>
+    <script src="../../sdk/pdr-tablet.js"></script>
+    <script src="../shared/kit.js"></script>
+    <script src="js/market.js"></script>
+    <script src="js/format.js"></script>
+    <script src="js/charts.js"></script>
+    <script src="js/backend.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

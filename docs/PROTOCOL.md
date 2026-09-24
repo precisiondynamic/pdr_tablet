@@ -29,7 +29,7 @@ String payloads are parsed automatically, so both `SendDuiMessage` and `SendNUIM
 
 | action | payload | effect |
 |---|---|---|
-| `os:init` | `{ settings?, apps?, status?, osName?, deviceName?, maxBackgroundApps? }` | One-shot setup after `os:ready`. Every field is optional. |
+| `os:init` | `{ settings?, apps?, status?, osName?, deviceName?, maxBackgroundApps?, appStorage?, bundledApps?, devApps? }` | One-shot setup after `os:ready`. Every field is optional. `appStorage` is `{ [appId]: data }` (see [App storage](#app-storage)). `bundledApps: false` removes the bundled reference apps. `devApps: true` shows developer apps (the SDK Demo) in-game. |
 | `os:wake` | – | Tablet taken out. The first wake of a session runs the boot screen (`bootStyle`: a systemd-style log of the real startup journal, a splash, or nothing), then the lock screen if it's enabled. |
 | `os:sleep` | – | Tablet put away. The screen goes black, the foreground app gets `hide`, and it locks if the lock screen is enabled. |
 | `os:lock` | – | Show the lock screen. |
@@ -50,7 +50,8 @@ String payloads are parsed automatically, so both `SendDuiMessage` and `SendNUIM
 | `apps:home` | – | Go to the home screen. |
 | `apps:message` | `{ id, event, data? }` | Deliver to the app page (SDK `message` event). Queued until the app is ready. |
 | `apps:badge` | `{ id, count }` | Icon badge. `0` clears it. |
-| `notify` | `{ appId?, title, body?, duration? }` | Notification (toast + notification center). With no `appId` it comes from the OS. |
+| `apps:storage` | `{ id, data }` | Replace one app's stored data, e.g. after loading a character. |
+| `notify` | `{ appId?, title, body?, data?, duration? }` | Notification (banner + message tray). With no `appId` it comes from the OS. When the user taps it, the app is launched with `data` as its launch data (a deep link). |
 
 ### Input relay (only needed when the OS runs in a DUI)
 
@@ -99,6 +100,7 @@ each event you care about. `app:request` is the only one whose response is used.
 | `os:requestClose` | `{}` | The user pressed the power button in the Control Center. Put the tablet away (then send `os:sleep`). |
 | `os:settingsChanged` | `{ settings, changed: string[] }` | Persist it (e.g. `SetResourceKvp`) and send it back via `os:init`/`os:settings` next session. |
 | `app:lifecycle` | `{ id, state, data? }` | `state` is one of `launched`, `ready`, `foreground`, `background`, `closed`. Route it to the owning resource's hooks. |
+| `app:storage` | `{ id, key, value }` or `{ id, cleared: true }` | An app wrote to `tablet.storage` (`value: null` means the key was removed). Persist it and hand it back with `os:init { appStorage }` / `apps:storage`. |
 | `app:request` | `{ id, action, data }` | From the SDK's `tablet.request()`. **Respond** with `{ ok = true, data = … }` or `{ ok = false, error = '…' }`. Any other value is treated as `data`. |
 
 ```lua
@@ -113,6 +115,38 @@ end)
 The OS identifies apps by their iframe window and never by anything a page claims, so
 `body.id` is always the app the request actually came from. Treat `data` as untrusted
 input all the same, and validate anything that matters on the server.
+
+## App storage
+
+`tablet.storage` gives every app a private key/value store (JSON values, 512 KB per app).
+The OS keeps a working copy in the page's `localStorage` and reports every change as
+`app:storage`, so the integration decides where data really lives. Per character is the
+usual choice:
+
+```lua
+local appData = {}   -- [appId] = { [key] = value }
+
+RegisterNUICallback('app:storage', function(e, cb)
+    appData[e.id] = appData[e.id] or {}
+    if e.cleared then appData[e.id] = {} else appData[e.id][e.key] = e.value end
+    SetResourceKvp(('apps:%s:%s'):format(charId, e.id), json.encode(appData[e.id]))
+    cb({})
+end)
+
+-- on character load / os:ready
+send({ action = 'os:init', appStorage = appData })
+```
+
+## Bundled apps
+
+`web/apps/manifest.json` lists reference apps that ship with the tablet (Messages, Notes,
+Calculator, LSX Crypto, and the developer-only SDK Demo). The OS registers them itself at
+startup; they are not affected by `apps:set`. Send `os:init { bundledApps = false }` to remove
+them, or `devApps = true` to also show the SDK Demo in-game. See [`web/apps/README.md`](../web/apps/README.md).
+
+Apps served from the OS's own origin (all bundled apps) run in an **opaque-origin** sandbox, so
+they can't reach into the OS page, and they have no `localStorage` of their own; they use
+`tablet.storage`. Apps from other resources keep their own origin.
 
 ## Lifecycle
 

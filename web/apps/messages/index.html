@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Messages</title>
+    <!-- Reference app (demo content): notifications with deep links, badges, work while in the
+         background, host → app events (`message:incoming`), storage. -->
+    <link rel="stylesheet" href="../shared/fonts.css">
+    <link rel="stylesheet" href="../shared/kit.css">
+    <link rel="stylesheet" href="messages.css">
+</head>
+<body>
+    <div class="msg" id="app">
+        <aside class="kit-sidebar msg-sidebar">
+            <div class="msg-toolbar">
+                <span class="msg-toolbar-title">Messages</span>
+                <button class="btn btn-flat btn-circle" id="mark-read" title="Mark all as read"></button>
+                <button class="btn btn-flat btn-circle" id="compose" title="New message"></button>
+            </div>
+            <div class="msg-threads" id="threads"></div>
+            <label class="msg-demo">
+                <span><b>Simulated messages</b><small class="dim">Demo contacts text you now and then</small></span>
+                <button class="switch" id="demo-switch" role="switch"><span></span></button>
+            </label>
+        </aside>
+        <main class="msg-main" id="main"></main>
+    </div>
+    <script src="../../sdk/pdr-tablet.js"></script>
+    <script src="../shared/kit.js"></script>
+    <script src="demo-data.js"></script>
+    <script src="messages.js"></script>
+</body>
+</html>

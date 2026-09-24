@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Notes</title>
+    <!-- Reference app: tablet.storage persistence, text input (keys relayed in a DUI),
+         lifecycle (flushes on hide, restores after eviction), deep links via launch data. -->
+    <link rel="stylesheet" href="../shared/fonts.css">
+    <link rel="stylesheet" href="../shared/kit.css">
+    <link rel="stylesheet" href="notes.css">
+</head>
+<body>
+    <div class="notes" id="app">
+        <aside class="kit-sidebar notes-sidebar">
+            <div class="notes-toolbar">
+                <div class="notes-search">
+                    <span id="search-icon"></span>
+                    <input class="entry" id="search" type="text" placeholder="Search notes" spellcheck="false" autocomplete="off">
+                </div>
+                <button class="btn btn-suggested btn-circle" id="new-note" title="New note"></button>
+            </div>
+            <div class="notes-list" id="list"></div>
+            <div class="notes-footer dim" id="footer"></div>
+        </aside>
+        <main class="notes-main" id="main"></main>
+    </div>
+    <script src="../../sdk/pdr-tablet.js"></script>
+    <script src="../shared/kit.js"></script>
+    <script src="notes.js"></script>
+</body>
+</html>

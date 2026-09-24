@@ -1,0 +1,38 @@
+[
+    {
+        "id": "pdr.messages",
+        "label": "Messages",
+        "url": "messages/index.html",
+        "icon": "messages/icon.svg",
+        "order": 10
+    },
+    {
+        "id": "pdr.notes",
+        "label": "Notes",
+        "url": "notes/index.html",
+        "icon": "notes/icon.svg",
+        "order": 20
+    },
+    {
+        "id": "pdr.calculator",
+        "label": "Calculator",
+        "url": "calculator/index.html",
+        "icon": "calculator/icon.svg",
+        "order": 30
+    },
+    {
+        "id": "pdr.crypto",
+        "label": "LSX Crypto",
+        "url": "crypto/index.html",
+        "icon": "crypto/icon.svg",
+        "order": 40
+    },
+    {
+        "id": "pdr.sdkdemo",
+        "label": "SDK Demo",
+        "url": "sdk-demo/index.html",
+        "icon": "sdk-demo/icon.svg",
+        "order": 900,
+        "dev": true
+    }
+]

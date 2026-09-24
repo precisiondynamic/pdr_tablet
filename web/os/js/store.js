@@ -2,7 +2,7 @@ import { Bridge } from './bridge.js';
 import { log } from './log.js';
 import { Emitter, clamp } from './util.js';
 
-export const VERSION = '1.2.0';
+export const VERSION = '1.3.0';
 const STORAGE_KEY = 'pdr_tablet:settings';
 
 // GNOME accent colours
@@ -37,7 +37,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
     clock24h: true,
     statusDate: true,         // show the date in the top bar
     weekStart: 'monday',      // 'monday' | 'sunday'
-    dock: ['system.settings'],
+    dock: ['pdr.messages', 'pdr.notes', 'pdr.crypto', 'system.settings'],   // missing apps are skipped
     mutedApps: [],
 });
 

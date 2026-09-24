@@ -72,6 +72,21 @@ registered this app**. It resolves with the handler's return value and rejects w
 Anything server-side is your resource's business: the Lua handler triggers your own server
 events or callbacks as usual.
 
+### Storage
+
+```js
+await tablet.storage.set('notes', notes);     // any JSON-serialisable value
+const notes = await tablet.storage.get('notes');   // null if missing
+await tablet.storage.remove('draft');
+const keys = await tablet.storage.keys();
+await tablet.storage.clear();
+```
+
+Every app has its own namespace with a 512 KB quota. Writes are reported to the integration,
+which persists them (per character, typically) and restores them when the tablet starts.
+Treat storage as the source of truth for anything the user shouldn't lose. Apps can be evicted
+from memory at any time while in the background (see Guidelines).
+
 ### Events
 
 ```js
@@ -91,12 +106,31 @@ tablet.on('message:contractUpdated', (data) => {}); // same, filtered to one eve
 tablet.home();                       // go to the home screen (the app keeps running)
 tablet.close();                      // close this app
 tablet.notify('Job ready', 'Meet at the docks');   // notification from this app
+tablet.notify({ title: 'Dani', body: 'hey', data: { thread: 'dani' } });
+//  ↑ tapping it launches your app with launchData = { thread: 'dani' } (or fires 'launch' if running)
 tablet.setBadge(3);                  // icon badge, 0 clears it
 tablet.launch('pdr_boosting', { contractId: 12 }); // open another installed app
 ```
 
+## Reference apps
+
+`web/apps/` contains working apps built only on this SDK. Read them before building your own:
+
+| App | Shows |
+|---|---|
+| Notes | storage, text input, save-on-hide, restore after eviction, launch data |
+| Calculator | a fully self-contained app with no requests |
+| Messages | notifications with deep links, badges, background work, host → app events |
+| LSX Crypto | a large app: live UI, charts, request contract with a demo fallback |
+| SDK Demo | one raw control per SDK call (developer only) |
+
+`web/apps/shared/kit.css` and `kit.js` are the small libadwaita-style kit those apps use.
+Copy it if you like; it isn't part of the SDK contract.
+
 ## Guidelines
 
+* **Save on `hide`.** A backgrounded app can be evicted without further warning, so flush
+  pending writes when you get `hide` and restore from `tablet.storage` on start.
 * **Pause work on `hide`.** The app stays loaded in the background (unless it's registered
   with `keepAlive: false`) and can be evicted when too many apps are open.
 * **Leave the window chrome to the OS.** Your page sits inside a window with a

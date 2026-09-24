@@ -14,6 +14,11 @@ accent picker), Night Light (with a strength slider), the lock screen toggle, th
 open apps with quit buttons, and Settings / Lock / Put away. Everything in it writes the
 same settings as the Settings app.
 
+It ships with five **reference apps** built only on the public SDK: Messages, Notes,
+Calculator, the LSX Crypto exchange, and a developer-only SDK Demo. They make the tablet
+usable on its own and exercise every SDK capability; the integration can switch them off.
+See [web/apps/README.md](web/apps/README.md).
+
 It keeps a real system journal. The first boot of a session prints it systemd-style
 (`[  OK  ] Started App Host.`), Settings › System Log shows it live, and warnings/errors
 are sent to the integration as `os:log` so they reach the F8 console. Criminal,
@@ -30,6 +35,7 @@ web/
     fonts/        Cantarell + JetBrains Mono (SIL OFL, licenses alongside)
   sdk/
     pdr-tablet.js script that app pages include      → https://cfx-nui-pdr_tablet/web/sdk/pdr-tablet.js
+  apps/           bundled reference apps + manifest.json
   dev/            browser dev harness + SDK test page (not listed in fxmanifest, never shipped)
 docs/
   PROTOCOL.md     contract between the OS and the Lua integration

@@ -1,0 +1,56 @@
+.calc { height: 100%; display: grid; grid-template-columns: 28rem 1fr; }
+
+.calc-history { display: flex; flex-direction: column; min-height: 0; background: var(--sidebar-bg); box-shadow: inset -1px 0 var(--border); }
+.calc-history-head { display: flex; align-items: center; justify-content: space-between; padding: 1.2rem 1rem 1.2rem 1.8rem; font-weight: 700; color: var(--text-dim); }
+.calc-history-list { flex: 1; overflow-y: auto; padding: 0 .8rem 1rem; display: flex; flex-direction: column; gap: .2rem; }
+.calc-history-empty { padding: 2rem 1rem; color: var(--text-dim); text-align: center; font-size: 1.3rem; }
+.calc-history-item { display: flex; flex-direction: column; align-items: flex-end; gap: .2rem; padding: 1rem 1.2rem; border-radius: 1rem; text-align: right; transition: background .12s; }
+.calc-history-item:hover { background: var(--hover); }
+.calc-history-expr { color: var(--text-dim); font-size: 1.2rem; word-break: break-all; }
+.calc-history-result { font-size: 1.8rem; font-weight: 700; }
+
+.calc-main { display: flex; flex-direction: column; padding: 2rem 2.4rem 2.4rem; min-height: 0; gap: 1.6rem; }
+.calc-display {
+    flex: 1;
+    min-height: 12rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: flex-end;
+    gap: .6rem;
+    padding: 1.6rem 2rem;
+    border-radius: 1.8rem;
+    background: var(--view-bg);
+    box-shadow: var(--card-shadow);
+    overflow: hidden;
+}
+.calc-expr { max-width: 100%; min-height: 2.4rem; font-size: 1.9rem; color: var(--text-dim); white-space: nowrap; overflow-x: auto; }
+.calc-expr::-webkit-scrollbar { display: none; }
+.calc-result { max-width: 100%; font-size: 6.4rem; font-weight: 700; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color .15s; }
+.calc-result.is-preview { color: var(--text-dim); }
+.calc-result.is-error { font-size: 3rem !important; color: var(--destructive); }
+.calc-result.pop { animation: pop .25s var(--ease-out); }
+@keyframes pop { from { transform: scale(.94); opacity: .5; } }
+
+.calc-keys { display: grid; grid-template-columns: repeat(4, 1fr); grid-auto-rows: minmax(5.4rem, 1fr); gap: 1rem; flex: 1.6; }
+.calc-key {
+    border-radius: 1.4rem;
+    font-size: 2.2rem;
+    font-weight: 700;
+    background: var(--card-bg);
+    box-shadow: var(--card-shadow);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background .12s, transform .08s, filter .12s;
+}
+.calc-key:hover { background: var(--btn-hover); }
+.calc-key:active, .calc-key.is-pressed { transform: scale(.95); }
+.calc-key.fn { background: var(--btn-bg); box-shadow: none; font-size: 1.9rem; }
+.calc-key.fn:hover { background: var(--btn-hover); }
+.calc-key.danger { color: var(--destructive); }
+.calc-key.op { background: var(--btn-bg); box-shadow: none; color: var(--accent); font-size: 2.6rem; }
+.calc-key.op:hover { background: var(--btn-hover); }
+.calc-key.eq { background: var(--accent); color: #fff; box-shadow: none; font-size: 2.6rem; }
+.calc-key.eq:hover { filter: brightness(1.1); background: var(--accent); }
+.calc-key .icon { font-size: 2.4rem; }

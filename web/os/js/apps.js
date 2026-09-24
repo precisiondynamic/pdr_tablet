@@ -7,6 +7,7 @@
 import { Bridge } from './bridge.js';
 import { log } from './log.js';
 import { state, settings, on, emit, setState, publicSettings } from './store.js';
+import { AppStorage } from './storage.js';
 import { appTile, icon } from './icons.js';
 import { h } from './util.js';
 
@@ -36,6 +37,7 @@ function normalize(input) {
         keepAlive: input.keepAlive !== false,
         badge: Math.max(0, parseInt(input.badge, 10) || 0),
         system: !!input.system,
+        bundled: !!input.bundled,
         systemIcon: input.system ? input.systemIcon ?? null : null,
         render: input.system ? input.render ?? null : null,
     };
@@ -95,7 +97,10 @@ function spawn(app, launchData) {
     } else {
         const loader = h('div', { class: 'app-loader' }, h('span', { class: 'spinner' }));
         const iframe = h('iframe', { src: app.url, title: app.label });
-        iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
+        // Apps served from the OS's own origin (bundled apps) get an opaque origin so they can't
+        // reach into the OS page. Apps from other resources keep their own origin.
+        const sameOrigin = new URL(app.url, location.href).origin === location.origin;
+        iframe.setAttribute('sandbox', sameOrigin ? 'allow-scripts allow-forms' : 'allow-scripts allow-same-origin allow-forms');
         iframe.addEventListener('load', () => loader.remove(), { once: true });
         body.append(iframe, loader);
         r.iframe = iframe;
@@ -204,8 +209,19 @@ function handleAppMessage(r, msg) {
             else log.warn('apps', `${id} tried to launch unknown app "${msg.id}"`);
             break;
         case 'notify':
-            emit('app:notify', { appId: id, title: msg.title, body: msg.body });
+            emit('app:notify', { appId: id, title: msg.title, body: msg.body, data: msg.data });
             break;
+        case 'storage': {
+            let reply;
+            try {
+                reply = { ok: true, data: AppStorage.op(id, msg.op, msg.key, msg.value) };
+            } catch (err) {
+                log.warn('storage', `${id} ${msg.op} failed: ${err.message}`);
+                reply = { ok: false, error: err.message };
+            }
+            post(r, 'response', { rid: msg.rid, ...reply });
+            break;
+        }
         case 'badge':
             Apps.setBadge(id, msg.count);
             break;
@@ -238,8 +254,8 @@ export const Apps = {
 
     /* ---------- registry ---------- */
 
-    register(input, { system = false } = {}) {
-        const app = normalize({ ...input, system });
+    register(input, { system = false, bundled = false } = {}) {
+        const app = normalize({ ...input, system, bundled });
         const prev = registry.get(app.id);
         if (prev?.system && !system) throw new Error(`"${app.id}" is a system app id`);
         registry.set(app.id, app);
@@ -263,7 +279,7 @@ export const Apps = {
         const cur = registry.get(id);
         if (!cur) return log.warn('apps', `update: unknown app "${id}"`);
         if (cur.system || !patch || typeof patch !== 'object') return;
-        Apps.register({ ...cur, ...patch, id });
+        Apps.register({ ...cur, ...patch, id }, { bundled: cur.bundled });
     },
 
     unregister(id) {
@@ -291,7 +307,8 @@ export const Apps = {
             }
         }
         for (const [id, app] of registry) {
-            if (!app.system && !incoming.has(id)) Apps.unregister(id);
+            // bundled apps are managed by bundled.js, not by the integration's list
+            if (!app.system && !app.bundled && !incoming.has(id)) Apps.unregister(id);
         }
         for (const item of incoming.values()) {
             try { Apps.register(item); } catch (err) { log.error('apps', err.message); }

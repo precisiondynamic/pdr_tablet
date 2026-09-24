@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PDR SDK Demo</title>
+<!-- DEVELOPER APP. Intentionally ugly: one raw control per SDK capability, JSON everywhere.
+     Only listed when the tablet runs in dev mode (browser harness, or os:init { devApps = true }). -->
+<style>
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: #bdbdbd; color: #000; font: 12px/1.35 'Courier New', Consolas, monospace; overflow: auto; }
+header { background: #000080; color: #fff; padding: 4px 8px; font-weight: bold; display: flex; justify-content: space-between; position: sticky; top: 0; z-index: 2; }
+main { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; padding: 6px; }
+fieldset { border: 2px groove #eee; margin: 0; padding: 4px 6px 6px; background: #d4d0c8; min-width: 0; }
+legend { font-weight: bold; background: #d4d0c8; padding: 0 3px; }
+button { font: inherit; padding: 1px 6px; margin: 2px 2px 0 0; background: #d4d0c8; border: 2px outset #fff; cursor: pointer; color: #000; }
+button:active { border-style: inset; }
+input, textarea, select { font: inherit; width: 100%; margin: 2px 0; background: #fff; color: #000; border: 2px inset #eee; padding: 1px 3px; }
+textarea { resize: vertical; height: 46px; }
+pre { margin: 3px 0 0; background: #000; color: #0f0; padding: 4px; white-space: pre-wrap; word-break: break-all; max-height: 150px; overflow: auto; font: 11px/1.3 Consolas, monospace; }
+.wide { grid-column: span 2; }
+.full { grid-column: 1 / -1; }
+.row { display: flex; gap: 4px; }
+.row > * { flex: 1; }
+.ok { color: #0f0; } .err { color: #f55; } .dim { color: #888; }
+.swatch { display: inline-block; width: 40px; height: 14px; border: 1px solid #000; vertical-align: middle; background: var(--tablet-accent, #f0f); }
+label { display: block; }
+small { color: #333; }
+</style>
+</head>
+<body>
+<header><span>PDR_SDK_DEMO.EXE</span><span id="hdr">not ready</span></header>
+<main>
+    <fieldset class="full">
+        <legend>context (live)</legend>
+        <pre id="ctx"></pre>
+    </fieldset>
+
+    <fieldset>
+        <legend>notify()</legend>
+        <input id="n-title" value="SDK Demo">
+        <input id="n-body" value="Hello from the SDK demo">
+        <input id="n-data" value='{"from":"notification","n":1}' title="data (JSON) = deep-link launch data">
+        <button id="n-send">notify</button>
+        <button id="n-delay">notify in 5s</button>
+        <button id="n-spam">spam x10</button>
+        <small>tap it → app gets launch event with data</small>
+    </fieldset>
+
+    <fieldset>
+        <legend>setBadge()</legend>
+        <div class="row"><input id="b-count" type="number" value="3"><button id="b-set">set</button></div>
+        <button id="b-inc">+1</button><button id="b-dec">-1</button><button id="b-zero">0</button>
+        <pre id="b-out">badge = 0</pre>
+    </fieldset>
+
+    <fieldset>
+        <legend>navigation / lifecycle</legend>
+        <button id="nav-home">home()</button>
+        <button id="nav-close">close()</button>
+        <button id="nav-bounce">home() + launch(self) in 3s</button>
+        <div class="row"><input id="l-app" value="pdr.notes"><input id="l-data" value='{"create":true,"title":"From SDK demo"}'></div>
+        <button id="nav-launch">launch(app, data)</button>
+        <button id="nav-bad">launch("does.not.exist")</button>
+    </fieldset>
+
+    <fieldset class="wide">
+        <legend>request(action, data, {timeout})</legend>
+        <div class="row"><input id="r-action" value="ping"><input id="r-timeout" type="number" value="15000"></div>
+        <textarea id="r-data">{"hello":"world"}</textarea>
+        <button id="r-send">request</button>
+        <button id="r-spam">x50 parallel</button>
+        <button id="r-empty">request("")</button>
+        <button id="r-timeoutbtn">timeout 1ms</button>
+        <pre id="r-out"></pre>
+    </fieldset>
+
+    <fieldset>
+        <legend>theme / settings</legend>
+        <div>data-tablet-theme = <b id="t-theme"></b></div>
+        <div>--tablet-accent = <span class="swatch"></span> <b id="t-accent"></b></div>
+        <div>clock24h = <b id="t-clock"></b></div>
+        <small>change them in the tablet; "settings" event updates this box</small>
+    </fieldset>
+
+    <fieldset class="wide">
+        <legend>storage</legend>
+        <div class="row"><input id="s-key" value="demo"><input id="s-val" value='{"counter":1,"list":[1,2,3]}'></div>
+        <button id="s-get">get</button><button id="s-set">set</button><button id="s-remove">remove</button>
+        <button id="s-keys">keys</button><button id="s-clear">clear</button>
+        <button id="s-count">counter++</button>
+        <button id="s-quota">write 600 KB (quota test)</button>
+        <button id="s-badkey">set("", 1)</button>
+        <button id="s-fn">set(key, function)</button>
+        <pre id="s-out"></pre>
+    </fieldset>
+
+    <fieldset>
+        <legend>input relay</legend>
+        <input id="k-input" placeholder="type here (relayed keys in DUI)">
+        <textarea id="k-area" placeholder="multi-line"></textarea>
+        <pre id="k-out" class="dim">no keys yet</pre>
+    </fieldset>
+
+    <fieldset class="full">
+        <legend>event log</legend>
+        <button id="log-clear">clear</button>
+        <button id="err-throw">throw Error()</button>
+        <button id="err-reject">unhandled rejection</button>
+        <pre id="log" style="max-height:200px"></pre>
+    </fieldset>
+</main>
+<script src="../../sdk/pdr-tablet.js"></script>
+<script src="demo.js"></script>
+</body>
+</html>
