@@ -83,6 +83,12 @@ or a custom framework. Jobs pay with `exports.pdr_tablet:CryptoPay(src, nil, { u
 and the cash-out ("laundering") rules are in `config/lsx.lua`.
 See [docs/LSX.md](docs/LSX.md).
 
+## NETWORK (pdr_criminal's app)
+
+`web/apps/network/` is the player app for pdr_criminal. It ships here but only appears when
+pdr_criminal registers it, and none of the criminal gameplay lives in the tablet.
+Contract: [web/apps/network/CONTRACT.md](web/apps/network/CONTRACT.md).
+
 ## Building apps
 
 See [docs/APP-SDK.md](docs/APP-SDK.md).

@@ -16,6 +16,15 @@ with `os:init { bundledApps = false }`.
 | **LSX Crypto** | `pdr.crypto` | Crypto exchange: markets, charts, trading, wallet, alerts | large live UI, `request` with a demo fallback, alerts as notifications with deep links, `storage`, `setBadge` |
 | **SDK Demo** | `pdr.sdkdemo` | Developer tool, deliberately ugly: one raw control per SDK call | everything, incl. error paths (quota, bad keys, timeouts, 50 parallel requests) |
 
+## Shipped but not bundled: NETWORK
+
+`network/` is the player app for **pdr_criminal** (contracts, crews, operations). Its files ship
+with the tablet so every PDR resource shares one app, but it is **not** in `manifest.json`: the
+tablet never shows it by itself. pdr_criminal registers it once a character has access and
+unregisters it when access is revoked. The tablet works the same with or without it. See
+[`network/CONTRACT.md`](network/CONTRACT.md). The dev harness has a "NETWORK" section that
+registers it with `?demo=1` and drives an operation step by step.
+
 The SDK Demo is marked `"dev": true`: it appears in the browser harness automatically and
 in-game only with `os:init { devApps = true }`.
 

@@ -74,6 +74,30 @@
         </div>
     </section>
     <section>
+        <h2>NETWORK (as pdr_criminal would)</h2>
+        <div class="row">
+            <button id="net-reg" title="pdr_criminal registers the app once the character has access">Grant access (register)</button>
+            <button id="net-unreg">Revoke</button>
+            <button data-send='{"action":"apps:launch","id":"pdr.network"}'>Open</button>
+        </div>
+        <div class="row" style="margin-top:6px" id="net-steps">
+            <button data-net="contracts">New contracts</button>
+            <button data-net="invite">Crew invite</button>
+            <button data-net="offer">X offer</button>
+        </div>
+        <div class="row" style="margin-top:6px" id="net-op">
+            <button data-net="identify">Target found</button>
+            <button data-net="attempt">Auth failed</button>
+            <button data-net="bypass">Bypassed</button>
+            <button data-net="signal">Signal ±</button>
+            <button data-net="untrack">Tracker off</button>
+            <button data-net="drive">Drive</button>
+            <button data-net="disconnect">Crew drop</button>
+            <button data-net="deliver">Deliver</button>
+            <button data-net="fail">Fail</button>
+        </div>
+    </section>
+    <section>
         <h2>Notification</h2>
         <input id="n-title" value="Delivery ready">
         <div class="row" style="margin-top:6px">
@@ -158,6 +182,20 @@
     document.getElementById('badge').onclick = () => send({ action: 'apps:badge', id: 'dev.test', count: 3 });
     document.getElementById('notify').onclick = () => send({ action: 'notify', appId: 'pdr.messages', data: { thread: 'marcus' }, title: document.getElementById('n-title').value, body: 'Sent from the dev harness.' });
     document.getElementById('notify-os').onclick = () => send({ action: 'notify', title: document.getElementById('n-title').value, body: 'System notification.' });
+
+    // NETWORK ships with the tablet but is registered by pdr_criminal, never bundled
+    const networkApp = {
+        id: 'pdr.network', label: 'Network', order: 60,
+        url: new URL('../apps/network/index.html?demo=1', location.href).href,
+        icon: new URL('../apps/network/icon.svg', location.href).href,
+    };
+    document.getElementById('net-reg').onclick = () => send({ action: 'apps:register', app: networkApp });
+    document.getElementById('net-unreg').onclick = () => send({ action: 'apps:unregister', id: 'pdr.network' });
+    document.querySelectorAll('[data-net]').forEach((b) => b.addEventListener('click', () => {
+        send({ action: 'apps:message', id: 'pdr.network', event: 'network:demo', data: { step: b.dataset.net } });
+        // the real server pays through CryptoPay; stand in for it with LSX's demo hook
+        if (b.dataset.net === 'deliver') send({ action: 'apps:message', id: 'pdr.crypto', event: 'crypto:demoPayout', data: { usd: 380, from: 'NETWORK', memo: 'Contract settlement' } });
+    }));
 
     os.addEventListener('load', () => {
         send({ action: 'os:init', deviceName: 'Dev harness' });

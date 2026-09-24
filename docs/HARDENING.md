@@ -151,4 +151,5 @@ tests/run.sh murder          # just the adversarial suite
 | `os-lifecycle` | lifecycle, security basics, navigation |
 | `settings-audit` | every Settings control and the Control Center, with visible effects |
 | `apps` | bundled apps and every SDK capability |
+| `network` | NETWORK app: registration gating, contract → crew → operation → report, split locking, in-place intel, deep links, X offers, live contract |
 | `murder` | everything in the table above |
