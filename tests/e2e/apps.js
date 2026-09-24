@@ -145,7 +145,7 @@ const { chromium } = require(process.env.PLAYWRIGHT || 'playwright');
   const W = () => c().evaluate(() => JSON.parse(JSON.stringify(window.__crypto.wallet())));
   check('starts in demo mode', (await c().$eval('.cx-mode', e => e.textContent)).includes('Demo'));
   let w0 = await W();
-  check('seeded wallet is consistent (cash ≥ 0, holdings > 0)', w0.cash > 0 && Object.values(w0.holdings).some(h => h.amount > 0) && w0.txs.length === 11, { cash: w0.cash, txs: w0.txs.length });
+  check('seeded wallet is consistent (cash ≥ 0, holdings > 0)', w0.cash > 0 && Object.values(w0.holdings).some(h => h.amount > 0) && w0.txs.length === 13 && w0.txs.filter(t => t.fromLabel).length === 2, { cash: w0.cash, txs: w0.txs.length });
   await c().evaluate(() => window.__crypto.go('coin', 'VNW')); await wait(600);
   await c().fill('.cx-amount', '1000'); await c().dispatchEvent('.cx-amount', 'input'); await wait(150);
   await c().click('.cx-trade .cx-submit'); await wait(300); await c().click('.kit-dialog .cx-submit'); await wait(700);
@@ -197,12 +197,30 @@ const { chromium } = require(process.env.PLAYWRIGHT || 'playwright');
   check('wallet persisted across close/relaunch', Math.abs((await W()).cash - cashBefore) < 0.001);
   check('launch data {coin} opens the coin page', (await c().$eval('.cx-coin-title h1', e => e.textContent)) === 'Los Santos Coin');
 
+  // job payouts: arrive in the payout coin, notify, deep-link to the transaction
+  await c().evaluate(() => window.__crypto.go('portfolio')); await wait(400);
+  check('portfolio shows Incoming payments in the payout coin', (await c().$eval('.cx-payments', e => e.textContent)).includes('ZNC') && (await c().$$('.cx-payments .cx-tx')).length === 2);
+  check('payout coin carries a badge in holdings', await c().$eval('.cx-hold-row .cx-pill', e => e.textContent === 'Payout'));
+  const znc0 = (await W()).holdings.ZNC.amount;
+  await send({ action: 'apps:home' }); await wait(300);
+  await send({ action: 'apps:message', id: 'pdr.crypto', event: 'crypto:demoPayout', data: { usd: 450, from: 'Unknown sender', memo: 'Package delivered' } }); await wait(700);
+  const wp = await W();
+  check('payout credits the payout coin at market price', wp.txs[0].sym === 'ZNC' && Math.abs(wp.holdings.ZNC.amount - znc0 - wp.txs[0].amount) < 1e-9 && Math.abs(wp.txs[0].usd - 450) < 0.01, wp.txs[0]);
+  check('payout raises a notification', await has('.banner') && (await os().$eval('.banner', e => e.textContent)).includes('ZNC received'));
+  await os().click('#tb-calendar'); await wait(300);
+  await os().click('#calendar .notif:has-text("ZNC received")'); await wait(900);
+  check('payment notification opens its transaction', (await c().$eval('.kit-dialog', e => e.textContent)).includes('Package delivered') && (await c().$eval('.kit-dialog', e => e.textContent)).includes('Payment from Unknown sender'));
+  await c().click('.kit-dialog .btn:has-text("Close")'); await wait(200);
+  check('Activity › Payments lists job payments', await c().evaluate(() => { window.__crypto.go('activity'); return true; }) &&
+    (await (async () => { await c().click('.linked button:has-text("Payments")'); await wait(300); return (await c().$$('.cx-tx')).length === 3; })()));
+
   section('LSX Crypto (live backend contract)');
   await p.evaluate(() => {
-    const state = { cash: 777, bank: 1000, bankName: 'Fleeca •• 0001', holdings: { LSC: { amount: 1, cost: 60000 } }, address: 'lsx1' + 'z'.repeat(38), txs: [] };
+    const state = window.__lsxState = { cash: 777, bank: 1000, bankName: 'Fleeca •• 0001', holdings: { LSC: { amount: 1, cost: 60000 } }, address: 'lsx1' + 'z'.repeat(38), txs: [],
+      features: { deposit: false, withdraw: false, transfers: false, payoutCoin: 'DPR' } };
     window.harnessRequestHandlers = {
       'crypto:hello': () => ({ ok: true, data: { backend: 'lsx', version: 1 } }),
-      'crypto:state': () => ({ ok: true, data: state }),
+      'crypto:state': () => ({ ok: true, data: window.__lsxState }),
       'crypto:trade': (r) => ({ ok: true, data: { tx: { id: 'srv', hash: '0x' + '1'.repeat(64), type: r.data.side, sym: r.data.sym, amount: r.data.amount, price: 1, usd: 100, fee: 0.5, time: Date.now(), status: 'completed' }, state: { ...state, cash: 111 } } }),
     };
   });
@@ -214,6 +232,20 @@ const { chromium } = require(process.env.PLAYWRIGHT || 'playwright');
   await c().fill('.cx-amount', '100'); await c().dispatchEvent('.cx-amount', 'input'); await wait(150);
   await c().click('.cx-trade .cx-submit'); await wait(300); await c().click('.kit-dialog .cx-submit'); await wait(700);
   check('trades go to the server and its state wins', (await W()).cash === 111);
+  await c().evaluate(() => window.__crypto.go('portfolio')); await wait(300);
+  check('server features: no Cash action when deposit and cash-out are off', !(await c().$('.cx-action:has-text("Cash")')));
+  check('server features: payout coin comes from the server', (await c().$eval('.cx-payments', e => e.textContent)).includes('DPR'));
+  await c().evaluate(() => window.__crypto.go('transfer', null, 'cash')); await wait(300);
+  check('server features: Cash tab hidden, Send disabled', !(await c().$('.linked button:has-text("Cash")')) && (await c().$eval('.cx-page', e => e.textContent)).includes('Transfers are off'));
+  await p.evaluate(() => {
+    const tx = { id: 'pay1', hash: '0x' + '2'.repeat(64), type: 'receive', sym: 'DPR', amount: 12, price: 2, usd: 24, fee: 0, time: Date.now(), status: 'completed', fromLabel: 'Tow yard', memo: 'Impound run' };
+    window.__lsxState = { ...window.__lsxState, holdings: { ...window.__lsxState.holdings, DPR: { amount: 12, cost: 24 } }, txs: [tx] };
+  });
+  await send({ action: 'apps:message', id: 'pdr.crypto', event: 'crypto:update', data: { tx: { id: 'pay1', type: 'receive', sym: 'DPR', amount: 12, fromLabel: 'Tow yard' } } }); await wait(600);
+  check('server push crypto:update refreshes the wallet', (await W()).holdings.DPR && (await W()).holdings.DPR.amount === 12);
+  await send({ action: 'apps:launch', id: 'pdr.crypto', data: { tx: 'pay1' } }); await wait(700);
+  check('launch data {tx} opens the transaction', (await c().$eval('.kit-dialog', e => e.textContent)).includes('Impound run'));
+  await c().click('.kit-dialog .btn:has-text("Close")'); await wait(200);
   await p.evaluate(() => { window.harnessRequestHandlers = {}; });
 
   section('Settings › Apps');

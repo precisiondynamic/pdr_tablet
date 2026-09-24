@@ -98,7 +98,7 @@ lying to *your server*. Validate on the server (see below).
 **Server**
 
 - [ ] Every client→server event an app uses is attacker-controlled. Validate the shape (`lib/validate.lua`), rate-limit per player (`lib/guard.lua`), check permissions/ownership/amounts against server state, and never take prices, balances or app ids from the client.
-- [ ] For LSX, execute trades with `lib/lsx_market.lua` (same prices as the tablet) and `verifyQuote` if you accept a client quote.
+- [ ] For LSX, the bundled server (`server/crypto/`, [LSX.md](LSX.md)) already does all of this. If you write your own, execute trades with `lib/lsx_market.lua` (same prices as the tablet) and `verifyQuote` if you accept a client quote.
 
 **Performance**
 
@@ -147,6 +147,7 @@ tests/run.sh murder          # just the adversarial suite
 | Suite | What |
 |---|---|
 | `lua`, `market` | `lib/validate.lua`, `lib/guard.lua`; Lua market engine vs the JS one (bit-for-bit) |
+| `crypto` | LSX server on a FiveM mock: payouts, trades, transfers, cash-out rules, every framework, storage failure |
 | `os-lifecycle` | lifecycle, security basics, navigation |
 | `settings-audit` | every Settings control and the Control Center, with visible effects |
 | `apps` | bundled apps and every SDK capability |

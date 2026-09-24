@@ -91,6 +91,27 @@
 
     function holding(sym) { return (wallet && wallet.holdings[sym]) || { amount: 0, cost: 0 }; }
 
+    /** What the server allows. Older servers don't send features, so fall back to the defaults. */
+    function feat() {
+        var f = (wallet && wallet.features) || {};
+        var d = LSX.Backend.DEFAULT_FEATURES;
+        var out = {};
+        for (var k in d) out[k] = f[k] != null ? f[k] : d[k];
+        if (!M.coin(out.payoutCoin)) out.payoutCoin = backend.payoutCoin;
+        return out;
+    }
+    function payoutCoin() { return feat().payoutCoin; }
+    function cashEnabled() { var f = feat(); return !!(f.deposit || f.withdraw); }
+
+    /** Job payments: incoming coins from a named sender (CryptoPay) rather than an address. */
+    function isPayment(tx) { return tx.type === 'receive' && !tx.from && !!(tx.fromLabel || tx.memo); }
+    function isCharge(tx) { return tx.type === 'send' && !tx.to && !!tx.toLabel; }
+    function findTx(id) {
+        if (!wallet || typeof id !== 'string') return null;
+        for (var i = 0; i < wallet.txs.length; i++) if (wallet.txs[i].id === id) return wallet.txs[i];
+        return null;
+    }
+
     function portfolioValue(t) {
         var v = wallet.cash;
         for (var sym in wallet.holdings) v += wallet.holdings[sym].amount * M.price(sym, t);
@@ -234,7 +255,7 @@
                 ['Sell', 'arrowDown', function () { openTrade('sell'); }],
                 ['Send', 'send', function () { go('transfer', null, 'send'); }],
                 ['Receive', 'qr', function () { go('transfer', null, 'receive'); }],
-                ['Deposit', 'bank', function () { go('transfer', null, 'cash'); }]].map(function (a) {
+                cashEnabled() ? ['Cash', 'bank', function () { go('transfer', null, 'cash'); }] : null].filter(Boolean).map(function (a) {
                 return h('button', { class: 'cx-action', onClick: a[2] }, h('span', { class: 'cx-action-icon' }, icon(a[1])), h('span', null, a[0]));
             }));
 
@@ -266,7 +287,8 @@
             };
             upd(now); live(upd);
             return h('button', { class: 'cx-row cx-hold-row', onClick: function () { go('coin', sym); } },
-                h('div', { class: 'cx-asset' }, coinIcon(sym), h('div', null, h('b', null, c.name), h('span', { class: 'dim' }, sym))),
+                h('div', { class: 'cx-asset' }, coinIcon(sym), h('div', null, h('b', null, c.name,
+                    sym === payoutCoin() ? h('span', { class: 'cx-pill', title: 'Payments arrive in this coin' }, 'Payout') : null), h('span', { class: 'dim' }, sym))),
                 h('div', { class: 'cx-cell-r' }, livePrice(sym), liveChange(sym, M.DAY, 'is-sm')),
                 h('div', { class: 'cx-cell-r' }, valueEl, h('span', { class: 'dim num' }, F.amount(hd.amount, sym))),
                 h('div', { class: 'cx-cell-r' }, h('span', { class: 'num' }, F.price(hd.amount ? hd.cost / hd.amount : 0)), h('span', { class: 'dim' }, 'avg cost')),
@@ -294,6 +316,7 @@
                         segmented(['1H', '1D', '1W', '1M', '1Y'].map(function (r) { return [r, r]; }), range, function (r) { prefs.portfolioRange = r; savePrefs(); render(); })),
                     chartHost, hoverEl, actions),
                 allocation),
+            paymentsCard(now),
             h('div', { class: 'cx-movers' }, movers.map(function (m) {
                 var spark = h('div', { class: 'cx-mover-spark' }, C.sparkline(M.series(m.sym, now - M.DAY, now, 48), { width: 140, height: 40 }));
                 return h('button', { class: 'cx-card cx-mover', onClick: function () { go('coin', m.sym); } },
@@ -302,6 +325,30 @@
             })),
             holdings);
     };
+
+    /** Where job payments land: the payout coin, what came in lately, and a one-tap way to trade it. */
+    function paymentsCard(now) {
+        var sym = payoutCoin(), c = M.coin(sym), hd = holding(sym);
+        var recent = wallet.txs.filter(isPayment);
+        var weekAgo = now - 7 * M.DAY;
+        var week = recent.filter(function (tx) { return tx.time >= weekAgo && tx.sym === sym; })
+            .reduce(function (a, tx) { return a + tx.amount; }, 0);
+        var valueEl = h('b', { class: 'num cx-pay-value' });
+        var upd = function (t) { valueEl.textContent = F.usd(hd.amount * M.price(sym, t)); };
+        upd(now); live(upd);
+        return h('section', { class: 'cx-card cx-payments' },
+            h('div', { class: 'cx-pay-head' },
+                h('div', { class: 'cx-asset' }, coinIcon(sym),
+                    h('div', null, h('b', null, 'Incoming payments'), h('span', { class: 'dim' }, 'Paid out in ' + c.name + ' (' + sym + ')'))),
+                h('div', { class: 'cx-pay-balance' },
+                    valueEl, h('span', { class: 'dim num' }, F.amount(hd.amount, sym) + ' · ' + F.amount(week, sym) + ' this week'))),
+            recent.length
+                ? h('div', { class: 'boxed-list cx-pay-list' }, recent.slice(0, 3).map(txRow))
+                : h('p', { class: 'dim cx-pay-empty' }, 'Payments sent to you arrive here in ' + sym + '. Hold them, trade them, or cash out.'),
+            h('div', { class: 'cx-pay-actions' },
+                hd.amount > 0 ? h('button', { class: 'btn btn-suggested', onClick: function () { go('coin', sym); } }, icon('swap'), 'Trade ' + sym) : null,
+                recent.length > 3 ? h('button', { class: 'btn btn-flat', onClick: function () { activityFilter = 'payments'; go('activity'); } }, 'All payments') : null));
+    }
 
     /* ---------------- markets ---------------- */
 
@@ -715,8 +762,11 @@
     };
 
     VIEWS.activity = function () {
-        var groups = { all: null, trades: ['buy', 'sell'], transfers: ['send', 'receive'], cash: ['deposit', 'withdraw'] };
-        var txs = wallet.txs.filter(function (tx) { return !groups[activityFilter] || groups[activityFilter].indexOf(tx.type) !== -1; });
+        var groups = { all: null, payments: null, trades: ['buy', 'sell'], transfers: ['send', 'receive'], cash: ['deposit', 'withdraw'] };
+        var txs = wallet.txs.filter(function (tx) {
+            if (activityFilter === 'payments') return isPayment(tx) || isCharge(tx);
+            return !groups[activityFilter] || groups[activityFilter].indexOf(tx.type) !== -1;
+        });
         var byDay = [];
         txs.forEach(function (tx) {
             var d = new Date(tx.time);
@@ -727,7 +777,7 @@
 
         return h('div', { class: 'cx-page cx-narrow' },
             h('div', { class: 'cx-page-head' }, h('h1', null, 'Activity'),
-                segmented([['all', 'All'], ['trades', 'Trades'], ['transfers', 'Transfers'], ['cash', 'Cash']], activityFilter, function (v) { activityFilter = v; render(); })),
+                segmented([['all', 'All'], ['payments', 'Payments'], ['trades', 'Trades'], ['transfers', 'Transfers'], ['cash', 'Cash']], activityFilter, function (v) { activityFilter = v; render(); })),
             byDay.length ? byDay.map(function (g) {
                 return h('section', { class: 'cx-day' },
                     h('h4', null, F.when(g.time, h24()).split(',')[0]),
@@ -736,18 +786,22 @@
     };
 
     function txTitle(tx) {
-        var m = TX_META[tx.type];
-        return m[0] + (tx.sym ? ' ' + M.coin(tx.sym).name : '');
+        var m = TX_META[tx.type] || TX_META.receive;
+        if (isPayment(tx)) return 'Payment from ' + tx.fromLabel;
+        if (isCharge(tx)) return 'Paid ' + tx.toLabel;
+        var c = tx.sym && M.coin(tx.sym);
+        return m[0] + (c ? ' ' + c.name : '');
     }
 
     function txRow(tx) {
-        var m = TX_META[tx.type];
+        var m = TX_META[tx.type] || TX_META.receive;
+        var sub = Kit.clock(tx.time, h24()) + ' · ' + (tx.memo || F.shortHash(tx.hash));
         var coinSide = tx.sym ? (m[2] === 'is-in' ? '+' : '−') + F.amount(tx.amount, tx.sym) : null;
         var cashSide = tx.type === 'buy' ? '−' + F.usd(tx.usd + tx.fee) : tx.type === 'sell' ? '+' + F.usd(tx.usd - tx.fee)
             : tx.type === 'deposit' ? '+' + F.usd(tx.usd) : tx.type === 'withdraw' ? '−' + F.usd(tx.usd) : '≈ ' + F.usd(tx.usd);
         return h('button', { class: 'row cx-tx', onClick: function () { txDetails(tx); } },
             h('span', { class: 'cx-tx-icon ' + m[2] }, tx.sym ? coinIcon(tx.sym, 'is-sm') : null, h('span', { class: 'cx-tx-glyph' }, icon(m[1]))),
-            h('div', { class: 'row-text' }, h('div', { class: 'row-title' }, txTitle(tx)), h('div', { class: 'row-subtitle' }, Kit.clock(tx.time, h24()) + ' · ' + F.shortHash(tx.hash))),
+            h('div', { class: 'row-text' }, h('div', { class: 'row-title' }, txTitle(tx)), h('div', { class: 'row-subtitle' }, sub)),
             h('div', { class: 'cx-tx-amounts' },
                 coinSide ? h('b', { class: 'num ' + m[2] }, coinSide) : h('b', { class: 'num ' + m[2] }, cashSide),
                 coinSide ? h('span', { class: 'dim num' }, cashSide) : h('span', { class: 'dim' }, wallet.bankName)));
@@ -757,9 +811,13 @@
         var rows = [kv('Status', h('span', { class: 'cx-status' }, icon('check'), 'Completed')), kv('Date', F.when(tx.time, h24()))];
         if (tx.sym) rows.push(kv('Amount', F.amount(tx.amount, tx.sym)), kv('Price', F.price(tx.price)));
         rows.push(kv(tx.sym ? 'Value' : 'Amount', F.usd(tx.usd)));
-        if (tx.fee) rows.push(kv(tx.type === 'send' ? 'Network fee' : 'Fee', F.usd(tx.fee)));
+        if (tx.fee) rows.push(kv(tx.type === 'send' ? 'Network fee' : tx.type === 'withdraw' ? 'Cash-out fee' : 'Fee', F.usd(tx.fee)));
+        if (tx.type === 'withdraw' && tx.payout != null) rows.push(kv('Paid to bank', F.usd(tx.payout)));
+        if (tx.toLabel) rows.push(kv('To', tx.toLabel));
         if (tx.to) rows.push(kv('To', h('span', { class: 'mono cx-addr-sm' }, tx.to)));
+        if (tx.fromLabel) rows.push(kv('From', tx.fromLabel));
         if (tx.from) rows.push(kv('From', h('span', { class: 'mono cx-addr-sm' }, tx.from)));
+        if (tx.memo) rows.push(kv('Memo', tx.memo));
         rows.push(kv('Transaction', h('span', { class: 'mono cx-addr-sm' }, tx.hash)));
         var close = sheet(txTitle(tx), h('div', null, h('div', { class: 'cx-kv' }, rows),
             h('button', { class: 'btn', style: { width: '100%', marginTop: '2rem' }, onClick: function () { close(); } }, 'Close')));
@@ -768,15 +826,19 @@
     /* ---------------- send / receive / cash ---------------- */
 
     VIEWS.transfer = function () {
+        var tabs = [['send', 'Send'], ['receive', 'Receive']];
+        if (cashEnabled()) tabs.push(['cash', 'Cash']);
         var tab = route.tab || 'send';
+        if (tab === 'cash' && !cashEnabled()) tab = 'send';
         var body = tab === 'send' ? sendForm() : tab === 'receive' ? receivePanel() : cashPanel();
         return h('div', { class: 'cx-page cx-narrow' },
             h('div', { class: 'cx-page-head' }, h('h1', null, 'Send & Receive'),
-                segmented([['send', 'Send'], ['receive', 'Receive'], ['cash', 'Cash']], tab, function (v) { go('transfer', null, v); })),
+                segmented(tabs, tab, function (v) { go('transfer', null, v); })),
             body);
     };
 
     function sendForm() {
+        if (!feat().transfers) return card(null, empty('send', 'Transfers are off', 'Sending coins between wallets isn’t available on this server.'));
         var owned = ownedSyms().filter(function (s) { return !M.coin(s).stable || holding(s).amount > 0; });
         if (!owned.length) return card(null, empty('send', 'Nothing to send', 'Buy or receive coins first.'));
         var sym = owned.indexOf(route.sym) !== -1 ? route.sym : owned[0];
@@ -868,27 +930,45 @@
 
     function cashPanel() {
         var amount = h('input', { class: 'entry num cx-cash-input', type: 'text', inputmode: 'decimal', placeholder: '0.00', autocomplete: 'off' });
-        var mode = route.cashMode || 'deposit';
+        var f = feat();
+        var modes = [];
+        if (f.deposit) modes.push(['deposit', 'Deposit from bank']);
+        if (f.withdraw) modes.push(['withdraw', 'Withdraw to bank']);
+        var mode = route.cashMode || modes[0][0];
+        if (!modes.some(function (m) { return m[0] === mode; })) mode = modes[0][0];
+        var left = f.dailyLimit > 0 ? Math.max(0, f.dailyLimit - (f.withdrawnToday || 0)) : Infinity;
+        var info = h('div', { class: 'cx-kv' });
+        var update = function () {
+            if (mode !== 'withdraw') { fill(info); return; }
+            var v = parseFloat(amount.value) || 0;
+            var cut = Math.round(v * f.withdrawFee) / 100;
+            fill(info,
+                f.withdrawFee > 0 ? kv('Cash-out fee (' + f.withdrawFee + '%)', F.usd(cut)) : null,
+                kv('You receive', F.usd(Math.max(0, v - cut))),
+                left !== Infinity ? kv('Left today', F.usd(left)) : null);
+        };
         var go2 = function (fn, verb) {
             var v = parseFloat(amount.value);
             if (!(v > 0)) { Kit.toast('Enter an amount'); return; }
+            if (mode === 'withdraw' && v > left + 1e-9) { Kit.toast('Daily cash-out limit: ' + F.usd(left) + ' left today'); return; }
             fn(v).then(function (res) {
                 wallet = res.state;
                 Kit.toast(verb + ' ' + F.usd(v));
                 render();
             }, function (err) { Kit.toast(err.message); });
         };
-        amount.addEventListener('input', function () { amount.value = amount.value.replace(/[^0-9.]/g, ''); });
+        amount.addEventListener('input', function () { amount.value = amount.value.replace(/[^0-9.]/g, ''); update(); });
         return h('div', { class: 'cx-cash' },
             h('div', { class: 'cx-cash-balances' },
                 h('div', { class: 'cx-card cx-balance' }, h('div', { class: 'cx-label' }, 'Exchange cash'), h('div', { class: 'cx-stat-value num' }, F.usd(wallet.cash))),
                 h('div', { class: 'cx-card cx-balance' }, h('div', { class: 'cx-label' }, wallet.bankName), h('div', { class: 'cx-stat-value num' }, F.usd(wallet.bank)))),
             card(null, h('div', { class: 'cx-form' },
-                segmented([['deposit', 'Deposit from bank'], ['withdraw', 'Withdraw to bank']], mode, function (v) { route.cashMode = v; render(); }),
+                modes.length > 1 ? segmented(modes, mode, function (v) { route.cashMode = v; render(); }) : h('h3', null, modes[0][1]),
                 h('label', { class: 'cx-field' }, h('span', null, 'Amount (USD)'), amount),
                 h('div', { class: 'cx-fracs' }, [100, 500, 1000, 5000].map(function (v) {
-                    return h('button', { class: 'cx-frac', onClick: function () { amount.value = String(v); } }, '$' + v.toLocaleString('en-US'));
+                    return h('button', { class: 'cx-frac', onClick: function () { amount.value = String(v); update(); } }, '$' + v.toLocaleString('en-US'));
                 })),
+                info,
                 h('button', {
                     class: 'btn btn-suggested btn-lg',
                     style: { width: '100%' },
@@ -1028,8 +1108,73 @@
 
     function handleLaunch(data) {
         if (!data || typeof data !== 'object') return;
+        if (typeof data.tx === 'string') { openTx(data.tx); return; }
         if (data.coin && M.coin(data.coin)) go('coin', data.coin);
         else if (data.view && VIEWS[data.view]) go(data.view);
+    }
+
+    /** Deep link from a payment notification. The tx may be newer than our copy of the wallet. */
+    function openTx(id) {
+        var show = function () {
+            activityFilter = 'all';
+            go('activity');
+            var tx = findTx(id);
+            if (tx) txDetails(tx); else Kit.toast('Transaction not found');
+        };
+        if (findTx(id)) show(); else refresh().then(show, show);
+    }
+
+    /* A live re-render would wipe what the player is typing, so while an input has focus the
+       refresh waits until it's released. */
+    var staleView = false;
+    function typing() {
+        var a = document.activeElement;
+        return !!(a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA') && content.contains(a));
+    }
+    function redrawSoon() {
+        if (!T.visible) { staleView = true; return; }
+        if (typing()) { staleView = true; return; }
+        staleView = false;
+        render();
+    }
+    document.addEventListener('focusout', function () { setTimeout(function () { if (staleView && !typing() && T.visible) redrawSoon(); }); });
+
+    var refreshing = null;
+    function refresh() {
+        if (!backend) return Promise.reject(new Error('not ready'));
+        if (!refreshing) {
+            refreshing = backend.state().then(function (s) { refreshing = null; wallet = s; return s; },
+                function (e) { refreshing = null; throw e; });
+        }
+        return refreshing;
+    }
+
+    /** Server push: the wallet changed outside this app (job payment, charge, another session). */
+    function onUpdate(data) {
+        if (!wallet) return;
+        refresh().then(function () {
+            var tx = data && data.tx && typeof data.tx === 'object' ? data.tx : null;
+            if (tx && T.visible && isPayment(tx) && M.coin(tx.sym)) Kit.toast('Received ' + F.amount(tx.amount, tx.sym) + (tx.fromLabel ? ' from ' + tx.fromLabel : ''));
+            redrawSoon();
+        }, function () {});
+    }
+
+    /** Demo only: stands in for the server's CryptoPay so payments can be tried without one. */
+    function demoPayout(o) {
+        if (!backend || !backend.simulatePayout) return Promise.resolve(null);
+        return backend.simulatePayout(o && typeof o === 'object' ? o : {}).then(function (res) {
+            wallet = res.state;
+            var tx = res.tx;
+            if (T.inTablet) {
+                T.notify({
+                    title: F.amount(tx.amount, tx.sym) + ' received',
+                    body: tx.memo ? tx.fromLabel + ' · ' + tx.memo : tx.fromLabel,
+                    data: { tx: tx.id },
+                });
+            }
+            onUpdate({ tx: tx });
+            return tx;
+        });
     }
 
     var resizeTimer = null;
@@ -1062,9 +1207,11 @@
     });
 
     T.on('launch', handleLaunch);
-    T.on('show', function () { if (wallet) { renderTicker(); render(); } });
+    T.on('message:crypto:update', onUpdate);
+    T.on('message:crypto:demoPayout', function (d) { demoPayout(d); });
+    T.on('show', function () { if (wallet) { staleView = false; renderTicker(); render(); } });
     T.on('settings', function () { if (wallet) render(); });
     T.on('hide', function () { savePrefs.flush(); });   // may be evicted while hidden
 
-    window.__crypto = { go: go, checkAlerts: checkAlerts, prefs: function () { return prefs; }, wallet: function () { return wallet; } };
+    window.__crypto = { go: go, checkAlerts: checkAlerts, prefs: function () { return prefs; }, wallet: function () { return wallet; }, payout: demoPayout, openTx: openTx, features: feat };
 })();

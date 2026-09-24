@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Runs every test suite. Needs: node, lua5.4, and Playwright with Chromium
+# Runs every test suite. Needs: node, lua5.4 (+ lua-cjson for `crypto`), and Playwright with Chromium
 #   npm i -g playwright && npx playwright install chromium      (or set PLAYWRIGHT / CHROMIUM)
-# Usage: tests/run.sh [suite…]      suites: lua market os-lifecycle settings-audit apps murder
+# Usage: tests/run.sh [suite…]      suites: lua market crypto os-lifecycle settings-audit apps murder
 set -u
 cd "$(dirname "$0")/.."
 PORT=${PORT:-8765}
@@ -15,12 +15,13 @@ if ! curl -s -o /dev/null "http://localhost:$PORT/dev/"; then
     for _ in $(seq 50); do curl -s -o /dev/null "http://localhost:$PORT/dev/" && break; sleep 0.1; done
 fi
 
-SUITES=${*:-lua market os-lifecycle settings-audit apps murder}
+SUITES=${*:-lua market crypto os-lifecycle settings-audit apps murder}
 FAILED=()
 for s in $SUITES; do
     echo "════════ $s"
     case $s in
         lua)    lua5.4 tests/lua/test_lib.lua ;;
+        crypto) lua5.4 tests/lua/test_crypto.lua ;;
         market) TMP=$(mktemp); node tests/lua/gen_prices.js "$TMP" && lua5.4 tests/lua/test_market.lua "$TMP"; rc=$?; rm -f "$TMP"; (exit $rc) ;;
         *)      node "tests/e2e/$s.js" | grep -v '^PASS' ;;
     esac

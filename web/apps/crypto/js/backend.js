@@ -113,6 +113,8 @@
             [14.7, 'buy', 'CHOP', 1200],
             [12.2, 'sell', 'VNW', 0.4],
             [9.3, 'buy', 'ZNC', 1000],
+            [8.1, 'payout', 'ZNC', 3.2, 'Unknown sender', 'Package delivered'],
+            [4.4, 'payout', 'ZNC', 5.5, 'Unknown sender', 'Vehicle drop-off'],
             [6.1, 'receive', 'LSC', 0.0142],
             [3.6, 'buy', 'GRV', 400],
             [2.2, 'withdraw', null, 1500],
@@ -129,6 +131,8 @@
             } else if (row[1] === 'sell') {
                 var held = s.holdings[row[2]].amount;
                 tx = applyTrade(s, 'sell', row[2], held * row[3], t);
+            } else if (row[1] === 'payout') {
+                tx = credit(s, row[2], row[3], t, { fromLabel: row[4], memo: row[5] });
             } else if (row[1] === 'receive') {
                 var h = s.holdings[row[2]] || { amount: 0, cost: 0 };
                 var p = M.price(row[2], t);
@@ -142,6 +146,20 @@
         s.bank = 48250;
         return s;
     }
+
+    function credit(s, sym, amount, t, fields) {
+        var h = s.holdings[sym] || { amount: 0, cost: 0 };
+        var p = M.price(sym, t);
+        h.amount += amount;
+        h.cost += amount * p;
+        s.holdings[sym] = h;
+        var tx = { id: 't' + t.toString(36) + hex(4), hash: '0x' + hex(64), type: 'receive', sym: sym, amount: amount, price: p, usd: amount * p, fee: 0, time: t, status: 'completed' };
+        for (var k in fields) tx[k] = fields[k];
+        return tx;
+    }
+
+    // what the live server reports in state.features; the demo mirrors a default server
+    var DEMO_FEATURES = { deposit: true, withdraw: true, withdrawFee: 0, dailyLimit: 0, withdrawnToday: 0, transfers: true, payoutCoin: 'ZNC' };
 
     function DemoBackend(tablet) {
         var s = null;
@@ -158,12 +176,14 @@
         };
         return {
             mode: 'demo',
+            payoutCoin: DEMO_FEATURES.payoutCoin,
             fees: { rate: FEE_RATE, min: MIN_FEE, minOrder: MIN_ORDER, network: networkFee },
             state: function () {
                 if (s) return Promise.resolve(s);
                 var load = tablet.inTablet ? tablet.storage.get('wallet').catch(function () { return null; }) : Promise.resolve(null);
                 return load.then(function (stored) {
                     s = stored && stored.holdings && stored.address ? stored : seedDemo(Date.now());
+                    s.features = DEMO_FEATURES;
                     if (!stored) persist();
                     return s;
                 });
@@ -172,7 +192,14 @@
             transfer: function (o) { return run(function (t) { return applyTransfer(s, o.sym, o.amount, o.to, t); }); },
             deposit: function (usd) { return run(function (t) { return applyCash(s, 'deposit', usd, t); }); },
             withdraw: function (usd) { return run(function (t) { return applyCash(s, 'withdraw', usd, t); }); },
-            reset: function () { s = seedDemo(Date.now()); return persist().then(function () { return s; }); },
+            reset: function () { s = seedDemo(Date.now()); s.features = DEMO_FEATURES; return persist().then(function () { return s; }); },
+            /** Demo only: a job payout arriving (the live server does this via CryptoPay). */
+            simulatePayout: function (o) {
+                o = o || {};
+                var sym = o.sym || DEMO_FEATURES.payoutCoin;
+                var amount = o.usd ? o.usd / M.price(sym, Date.now()) : (o.amount || 1);
+                return result(credit(s, sym, amount, Date.now(), { fromLabel: o.from || 'Unknown sender', memo: o.memo || 'Job payment' }));
+            },
         };
     }
 
@@ -189,12 +216,15 @@
         };
         return {
             mode: 'live',
+            payoutCoin: hello.payoutCoin || 'ZNC',
             server: hello,
             fees: {
                 rate: hello.feeRate != null ? hello.feeRate : FEE_RATE,
                 min: hello.minFee != null ? hello.minFee : MIN_FEE,
                 minOrder: hello.minOrder != null ? hello.minOrder : MIN_ORDER,
-                network: networkFee,
+                network: hello.networkUsd != null
+                    ? function (sym, t) { return hello.networkUsd / M.price(sym, t); }
+                    : networkFee,
             },
             state: function () { return call('state'); },
             trade: function (o) { return call('trade', o); },
@@ -214,5 +244,5 @@
         });
     }
 
-    global.LSX.Backend = { connect: connect, FEE_RATE: FEE_RATE, MIN_ORDER: MIN_ORDER };
+    global.LSX.Backend = { connect: connect, DEFAULT_FEATURES: DEMO_FEATURES, FEE_RATE: FEE_RATE, MIN_ORDER: MIN_ORDER };
 })(window);

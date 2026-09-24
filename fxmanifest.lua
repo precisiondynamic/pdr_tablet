@@ -11,6 +11,22 @@ version '1.4.0'
 -- server helpers for app resources:  server_script '@pdr_tablet/lib/validate.lua' (etc.)
 -- lib/validate.lua, lib/guard.lua, lib/lsx_market.lua
 
+-- LSX crypto economy (server-authoritative wallets, job payouts). Configure in config/lsx.lua,
+-- see docs/LSX.md. Set LSXConfig.enabled = false to run the app in demo mode only.
+server_scripts {
+    'lib/validate.lua',
+    'lib/guard.lua',
+    'lib/lsx_market.lua',
+    'config/lsx.lua',
+    'server/crypto/bridge.lua',
+    'server/crypto/store.lua',
+    'server/crypto/service.lua',
+}
+
+client_scripts {
+    'client/crypto.lua',
+}
+
 files {
     'web/os/index.html',
     'web/os/css/*.css',

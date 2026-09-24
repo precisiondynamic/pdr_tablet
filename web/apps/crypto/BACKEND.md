@@ -1,5 +1,9 @@
 # LSX server contract
 
+> **pdr_tablet ships a complete server for this contract** (`server/crypto/`, configured in
+> `config/lsx.lua`). See [docs/LSX.md](../../../docs/LSX.md). Read on only if you are
+> replacing it with your own economy (`LSXConfig.enabled = false`).
+
 LSX works out of the box with a **demo account** that lives on the tablet (seeded wallet,
 simulated trades, saved with `tablet.storage`). To connect it to your server's economy,
 answer these requests in the Lua handler of the resource that owns `pdr.crypto` (the
@@ -13,7 +17,7 @@ user-facing failure (shown as a toast).
 
 | action | data | respond with |
 |---|---|---|
-| `crypto:hello` | `{ version = 1 }` | `{ backend = 'lsx', version = 1, feeRate = 0.005, minFee = 0.25, minOrder = 10 }` |
+| `crypto:hello` | `{ version = 1 }` | `{ backend = 'lsx', version = 1, feeRate = 0.005, minFee = 0.25, minOrder = 10, networkUsd = 0.8, payoutCoin = 'ZNC' }` |
 
 If `crypto:hello` doesn't answer with `backend = 'lsx'` within 2.5 s, LSX stays in demo mode.
 The fee fields are optional and only drive the preview in the trade ticket; the server's
@@ -29,6 +33,12 @@ State = {
     address = 'lsx1…',                   -- 42 chars: 'lsx1' + 38 of [a-z0-9]; unique per player
     holdings = { LSC = { amount = 0.13, cost = 9800.00 } },   -- cost = total USD paid (for P&L)
     txs = { Tx, … },                     -- newest first, cap it (LSX shows ~400)
+    features = {                         -- optional; what the app offers (defaults: all on, no fee)
+        deposit = true, withdraw = true, transfers = true,
+        withdrawFee = 15,                -- percent kept on cash-out (shown in the preview)
+        dailyLimit = 5000, withdrawnToday = 1200,   -- USD, 0 = no limit
+        payoutCoin = 'ZNC',              -- highlighted as "Incoming payments"
+    },
 }
 
 Tx = {
@@ -40,6 +50,10 @@ Tx = {
     usd = 741.00,       -- notional
     fee = 3.71,         -- USD
     to = 'lsx1…', from = 'lsx1…',   -- transfers
+    fromLabel = 'Unknown sender',   -- job payment (receive without `from`): shown as "Payment from …"
+    toLabel = 'Dealer',             -- charge (send without `to`)
+    memo = 'Package delivered',     -- optional, shown in Activity and details
+    payout = 850.00,                -- withdraw: what reached the bank after `fee`
 }
 ```
 
@@ -56,6 +70,14 @@ Tx = {
 * **Deposit / withdraw** move money between your framework's bank account and `cash`.
 * **Transfers** to another player's `address` should credit them with a `receive` tx.
 * Never trust `data`: validate every amount server-side.
+
+## Pushes
+
+When the wallet changes outside the app (a job payment, a charge), deliver
+`apps:message { id = 'pdr.crypto', event = 'crypto:update', data = { tx = Tx } }`. LSX
+re-fetches `crypto:state`, and if it's on screen it shows a toast for incoming payments.
+A notification with `data = { tx = Tx.id }` opens that transaction when tapped, as does
+launching the app with the same launch data.
 
 ## Prices
 

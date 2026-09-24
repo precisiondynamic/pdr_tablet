@@ -41,7 +41,11 @@ docs/
   PROTOCOL.md     contract between the OS and the Lua integration
   APP-SDK.md      how another resource builds a tablet app
   HARDENING.md    guarantees, limits, integration checklist, server validation
+  LSX.md          crypto payouts: exports, cash-out rules, frameworks
 lib/              server helpers (Lua 5.4): validate.lua, guard.lua, lsx_market.lua
+config/lsx.lua    LSX economy settings
+server/crypto/    LSX server: framework bridge, wallet storage, requests + exports
+client/crypto.lua LSX client glue (request relay, pushes, notifications)
 tests/            run.sh + browser suites (e2e/) + Lua tests (lua/)
 ```
 
@@ -59,10 +63,10 @@ launching, messages, badges and notifications, with a live log of every event th
 ## Tests
 
 ```sh
-tests/run.sh           # all suites: Lua libs, market parity, OS, settings, apps, adversarial
+tests/run.sh           # all suites: Lua libs, market parity, LSX server, OS, settings, apps, adversarial
 ```
 
-Needs node, lua5.4 and Playwright + Chromium. `tests/e2e/murder.js` is the adversarial suite:
+Needs node, lua5.4 (+ lua-cjson for the LSX server suite) and Playwright + Chromium. `tests/e2e/murder.js` is the adversarial suite:
 hostile apps, request floods, deep-link races, storage corruption, character switches, stuck
 input, restarts and fuzzing. See [docs/HARDENING.md](docs/HARDENING.md).
 
@@ -71,6 +75,13 @@ input, restarts and fuzzing. See [docs/HARDENING.md](docs/HARDENING.md).
 See [docs/PROTOCOL.md](docs/PROTOCOL.md). In short: load the OS page in the DUI, send it
 `{ action = ... }` messages, register NUI callbacks for its events, relay mouse through
 `SendDuiMouse*` and keys through `input:key`.
+
+## LSX crypto (job payouts)
+
+The bundled LSX app comes with a server economy that works on Qbox, QBCore, ESX, standalone
+or a custom framework. Jobs pay with `exports.pdr_tablet:CryptoPay(src, nil, { usd = 450 })`,
+and the cash-out ("laundering") rules are in `config/lsx.lua`.
+See [docs/LSX.md](docs/LSX.md).
 
 ## Building apps
 
