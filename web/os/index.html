@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PDR OS</title>
+    <link rel="stylesheet" href="css/os.css">
+    <!-- shared key-injection helpers (window.PDRTablet); the OS never calls ready() -->
+    <script>window.__PDR_TABLET_OS__ = true;</script>
+    <script src="../sdk/pdr-tablet.js"></script>
+    <script type="module" src="js/main.js"></script>
+</head>
+<body>
+    <div id="device" class="device is-asleep is-locked">
+        <div id="wallpaper" class="wallpaper"></div>
+
+        <div id="home" class="home"></div>
+        <nav id="dock" class="dock"></nav>
+        <div id="apps" class="apps"></div>
+        <div id="switcher" class="switcher"></div>
+        <div id="lock" class="lock"></div>
+
+        <header id="statusbar" class="statusbar"></header>
+        <div id="homebar" class="homebar" title="Home"></div>
+
+        <div id="panel-scrim" class="scrim"></div>
+        <div id="panel" class="panel"></div>
+        <div id="toasts" class="toasts"></div>
+        <div id="menu-scrim" class="scrim menu-scrim"></div>
+        <div id="menu" class="menu"></div>
+
+        <div id="boot" class="boot is-hidden"></div>
+        <div id="sleep" class="sleep"></div>
+        <div id="dim" class="dim"></div>
+    </div>
+</body>
+</html>
