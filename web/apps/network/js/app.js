@@ -15,6 +15,7 @@
     var confirmedVersion = null;        // lobby split version this player last confirmed
     var splitDraft = null;              // { id: pct } while the lead is editing the split
     var busy = false;
+    var ui = { tier: 'all', comms: 'all', crew: 'invites', profile: 'standing' };   // tab selections
 
     var app = document.getElementById('app');
 
@@ -130,11 +131,41 @@
         minus: '<path d="M6 12h12"/>',
         close: '<path d="M7 7l10 10M17 7L7 17"/>',
         ext: '<path d="M14 5h5v5M19 5l-8 8M17 14v5H5V7h5"/>',
+        map: '<path d="M3.5 6.5l5.5-2 6 2 5.5-2v13l-5.5 2-6-2-5.5 2z"/><path d="M9 4.5v13M15 6.5v13"/>',
+        comms: '<path d="M4 5.5h16v10H11l-4.5 3.5v-3.5H4z"/><path d="M8 9.5h8M8 12.5h5"/>',
+        lock: '<rect x="5.5" y="10.5" width="13" height="9" rx="1"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>',
+        send: '<path d="M4 12l16-7-5.5 15-3-6z"/><path d="M11.5 14L20 5"/>',
+        flame: '<path d="M12 3.5c1 3.5 5 5.5 5 10a5 5 0 0 1-10 0c0-2.5 1.5-3.5 2-5.5 1 1.5 1.5 2 2 2.5.5-2.5.5-4.5 1-7z"/>',
+        signal: '<path d="M5 18v-2M9.5 18v-5M14 18V9.5M18.5 18V6"/>',
     };
     function glyph(name) {
         return h('span', { class: 'g', html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="square" stroke-linejoin="miter">' + (GLYPHS[name] || '') + '</svg>' });
     }
     function tierBadge(t, cls) { return h('span', { class: 'tier tier-' + String(t).toLowerCase() + ' ' + (cls || '') }, t); }
+    var TIERS = ['D', 'C', 'B', 'A', 'X'];
+    function tierVar(t) { return 'var(--t-' + String(t || 'd').toLowerCase() + ')'; }
+    function tcls(t) { return 't-' + String(t || 'd').toLowerCase(); }
+    /** Tab strip: options [[value, label, count?]]. */
+    function tabs(options, value, onChange, cls) {
+        return h('div', { class: 'tabs ' + (cls || ''), role: 'tablist' }, options.map(function (o) {
+            return h('button', { class: 'tab' + (o[0] === value ? ' is-active' : ''), role: 'tab', 'data-tab': o[0], onClick: function () { if (o[0] !== value) onChange(o[0]); } },
+                h('span', null, o[1]), o[2] ? h('b', { class: 'tab-count' }, String(o[2])) : null);
+        }));
+    }
+    function heatMeter(compact) {
+        var el = h('div', { class: 'heat' + (compact ? ' is-compact' : '') },
+            h('div', { class: 'heat-head' }, glyph('flame'), h('span', { class: 'lbl' }, 'HEAT'), bound('b', 'heat-label mono', function (s) { var x = s.heat || {}; return { text: x.label || '—', cls: 'is-' + String(x.label || 'low').toLowerCase() }; }, 'heat')),
+            h('div', { class: 'heat-bar' }, h('i')));
+        effect(function (s) { return s.heat && s.heat.level; }, function (s) { el.querySelector('.heat-bar i').style.width = ((s.heat && s.heat.level) || 0) * 100 + '%'; });
+        el.querySelector('.heat-bar i').style.width = ((S.heat && S.heat.level) || 0) * 100 + '%';
+        return el;
+    }
+    function trust(v) {
+        var n = Math.round((v || 0) / 20);
+        return h('span', { class: 'trust', title: 'Trust ' + (v || 0) }, [0, 1, 2, 3, 4].map(function (i) { return h('i', { class: i < n ? 'on' : '' }); }));
+    }
+    function unreadTotal(s) { return ((s.comms && s.comms.threads) || []).reduce(function (a, t) { return a + (t.unread || 0); }, 0); }
+    function threads(s) { return (s.comms && s.comms.threads) || []; }
     function label(text, extra) { return h('div', { class: 'lbl' }, text, extra || null); }
     function kv(k, v, cls) { return h('div', { class: 'kv ' + (cls || '') }, h('span', { class: 'k' }, k), typeof v === 'string' || typeof v === 'number' ? h('span', { class: 'v' }, String(v)) : v); }
     function panel(cls) { var kids = Array.prototype.slice.call(arguments, 1); return h('section', { class: 'panel ' + (cls || '') }, kids); }
@@ -252,14 +283,14 @@
 
     function syncBadge() {
         if (!T.inTablet || !S) return;
-        T.setBadge(S.invites.length + (S.result ? 1 : 0) + (S.offer ? 1 : 0));
+        T.setBadge(S.invites.length + (S.result ? 1 : 0) + (S.offer ? 1 : 0) + unreadTotal(S));
     }
 
     /* ================================================================== */
     /* shell + routing                                                     */
     /* ================================================================== */
 
-    var NAV = [['home', 'Home'], ['contracts', 'Contracts'], ['crew', 'Crew'], ['operations', 'Operations'], ['profile', 'Profile']];
+    var NAV = [['home', 'Home'], ['contracts', 'Contracts'], ['map', 'Map'], ['comms', 'Comms'], ['crew', 'Crew'], ['operations', 'Operations'], ['profile', 'Profile']];
 
     function shell() {
         fill(app,
@@ -282,7 +313,7 @@
         if (!nav) return;
         var active = NAV_OF[route.view] || route.view;
         fill(nav, NAV.map(function (n) {
-            var count = n[0] === 'crew' ? S.invites.length + (S.lobby ? 0 : 0) : n[0] === 'contracts' ? S.contracts.filter(function (c) { return c.fresh; }).length + (S.offer ? 1 : 0) : 0;
+            var count = n[0] === 'crew' ? S.invites.length : n[0] === 'contracts' ? S.contracts.filter(function (c) { return c.fresh; }).length + (S.offer ? 1 : 0) : n[0] === 'comms' ? unreadTotal(S) : 0;
             var live = (n[0] === 'operations' && S.operation) || (n[0] === 'crew' && S.lobby);
             return h('button', { class: 'nav-row' + (active === n[0] ? ' is-active' : ''), 'data-nav': n[0], onClick: function () { go(n[0]); } },
                 glyph(n[0]), h('span', null, n[1]),
@@ -347,24 +378,50 @@
     /* ---------------- 01 home ---------------- */
 
     VIEWS.home = {
-        sig: function (s) { return ['home', !!s.operation && s.operation.id, !!s.lobby && s.lobby.id, !!s.result && s.result.id, s.invites.length, !!s.offer, s.contracts.length, s.history.length].join(); },
+        sig: function (s) { return ['home', !!s.operation && s.operation.id, !!s.lobby && s.lobby.id, !!s.result && s.result.id, s.invites.length, !!s.offer, s.contracts.map(function (c) { return c.id; }).join('.'), s.history.length, threads(s).length, s.standing.tier].join(); },
         build: function (s) {
-            var op = s.operation;
-            var available = s.offer
-                ? panel('card card-available is-offer', label('AVAILABLE'), h('div', { class: 'big-count' }, h('b', null, '1'), h('span', null, 'PRIVATE OFFER')),
-                    h('div', { class: 'card-foot' }, h('span', { class: 'dim' }, 'Source unknown'), link('REVIEW', function () { go('dossier', s.offer.id); })))
-                : panel('card card-available', label('AVAILABLE'),
-                    h('div', { class: 'big-count' }, bound('b', 'mono', function (s) { return pad(s.contracts.length); }), h('span', null, 'CONTRACTS')),
-                    h('div', { class: 'card-foot' },
-                        bound('span', 'dim', function (s) { return s.contracts.length ? (s.contracts.some(function (c) { return c.fresh; }) ? 'New work available' : 'Work available') : 'Nothing right now'; }),
-                        link('VIEW', function () { go('contracts'); })));
+            var op = s.operation, st = s.standing, stats = s.stats || {};
+            var week = (stats.earnings || []).slice(-7);
+            var weekSum = week.reduce(function (a, d) { return a + d.v; }, 0);
+            var rate = stats.completed + stats.failed ? stats.completed / (stats.completed + stats.failed) : 0;
 
-            var rep = panel('card card-rep', label('REPUTATION'), standingBlock(s, true));
+            var hero = h('section', { class: 'hero ' + tcls(st.tier) },
+                h('div', { class: 'hero-main' },
+                    h('div', { class: 'lbl' }, 'NETWORK · ', h('span', { class: 'mono' }, s.player.handle.toUpperCase())),
+                    h('h1', null, greeting()),
+                    h('div', { class: 'hero-chips' },
+                        chip('ACCESS', st.tier, tierVar(st.tier)),
+                        chip('THIS WEEK', '+' + money(weekSum), 'var(--net-ok)'),
+                        chip('SUCCESS', Math.round(rate * 100) + '%', 'var(--t-b)'),
+                        chip('STREAK', String(stats.streak || 0), 'var(--t-a)'))),
+                s.heat ? heatMeter() : null);
+
+            var available = s.offer
+                ? panel('card card-available is-offer ' + tcls('X'), label('AVAILABLE'), h('div', { class: 'big-count' }, h('b', null, '1'), h('span', null, 'PRIVATE OFFER')),
+                    h('p', { class: 'dim' }, 'Source unknown. This opportunity will not remain available.'),
+                    h('div', { class: 'card-foot' }, h('span'), link('REVIEW', function () { go('dossier', s.offer.id); })))
+                : panel('card card-available', h('div', { class: 'row-between' }, label('AVAILABLE'), link('VIEW ALL', function () { go('contracts'); })),
+                    h('div', { class: 'big-count' }, bound('b', 'mono', function (s) { return pad(s.contracts.length); }), h('span', null, 'CONTRACTS')),
+                    h('div', { class: 'mini-list' }, s.contracts.slice(0, 3).map(function (c) {
+                        return h('button', { class: 'mini ' + tcls(c.tier), onClick: function () { go('dossier', c.id); } },
+                            tierBadge(c.tier, 'is-sm'), h('span', { class: 'mono code' }, c.code),
+                            h('span', { class: 'dim sm' }, (c.area && c.area.name) || ''), h('span', { class: 'mono sm r' }, payout(c.payout)));
+                    })),
+                    !s.contracts.length ? h('div', { class: 'dim' }, 'Nothing right now') : null);
+
+            var rep = panel('card card-rep ' + tcls(st.tier), label('REPUTATION'), standingBlock(s, true));
+
+            var earn = panel('card card-earn', h('div', { class: 'row-between' }, label('EARNINGS · 7 DAYS'), h('span', { class: 'mono pos' }, '+' + money(weekSum))),
+                h('div', { class: 'chart-box' }, V.bars(week.map(function (d, i) {
+                    return { value: d.v, label: ['S', 'M', 'T', 'W', 'T', 'F', 'S'][new Date(d.t).getDay()], color: i === week.length - 1 ? 'var(--net-ok)' : 'var(--t-b)', title: money(d.v) };
+                }), { height: 100 })));
 
             var active = op ? activeCard(s) : s.lobby ? lobbyCard(s) : panel('card card-empty', h('div', { class: 'dim' }, 'No active operation'));
 
-            var invites = s.invites.length ? h('div', { class: 'section' }, label('INVITATIONS'),
-                h('div', { class: 'list' }, s.invites.map(inviteRow))) : null;
+            var inbox = threads(s).filter(function (t) { return t.messages.length; })
+                .sort(function (a, b) { return b.messages[b.messages.length - 1].t - a.messages[a.messages.length - 1].t; }).slice(0, 3);
+            var comms = panel('card card-comms', h('div', { class: 'row-between' }, label('COMMS', unreadTotal(s) ? h('span', { class: 'pill-count' }, String(unreadTotal(s))) : null), link('OPEN', function () { go('comms'); })),
+                inbox.length ? h('div', { class: 'list tight' }, inbox.map(threadRow)) : h('div', { class: 'dim' }, 'No messages'));
 
             var result = s.result ? panel('card card-result is-' + s.result.outcome,
                 h('div', { class: 'row-between' },
@@ -372,19 +429,25 @@
                     link('VIEW REPORT', function () { go('report', s.result.id); }))) : null;
 
             return h('div', { class: 'page page-home' },
-                h('div', { class: 'hello' }, h('div', { class: 'lbl' }, 'NETWORK'), h('h1', null, greeting())),
+                hero,
                 result,
                 op ? h('div', { class: 'section' }, label('ACTIVE OPERATION'), active) : null,
-                h('div', { class: 'grid-2' }, available, rep),
+                h('div', { class: 'grid-3' }, available, rep, earn),
                 op ? null : h('div', { class: 'section' }, label(s.lobby ? 'CREW ASSEMBLING' : 'ACTIVE OPERATION'), active),
-                invites,
-                h('div', { class: 'section' }, label('RECENT'), recentList(s.history.slice(0, 4))));
+                s.invites.length ? h('div', { class: 'section' }, label('INVITATIONS'), h('div', { class: 'list' }, s.invites.map(inviteRow))) : null,
+                h('div', { class: 'grid-2 is-top' },
+                    h('div', { class: 'section' }, label('RECENT'), recentList(s.history.slice(0, 4))),
+                    h('div', { class: 'section' }, label('INBOX'), comms)));
         },
     };
 
+    function chip(k, v, color) {
+        return h('div', { class: 'chip', style: { '--c': color } }, h('span', { class: 'chip-k' }, k), h('b', { class: 'chip-v mono' }, v));
+    }
+
     function activeCard(s) {
         var op = s.operation;
-        return h('button', { class: 'panel card card-active', onClick: function () { go('operation'); } },
+        return h('button', { class: 'panel card card-active ' + tcls(op.contract.tier), onClick: function () { go('operation'); } },
             h('div', { class: 'row-between' },
                 h('div', { class: 'op-head' }, tierBadge(op.contract.tier), h('div', null, h('div', { class: 'op-code' }, op.contract.code), h('div', { class: 'dim mono sm' }, op.contract.id))),
                 h('div', { class: 'op-state' }, h('i', { class: 'pulse' }), 'OPERATION ACTIVE')),
@@ -400,7 +463,7 @@
     function lobbyCard(s) {
         var L = s.lobby;
         var joined = L.members.filter(function (m) { return m.state !== 'invited'; });
-        return h('button', { class: 'panel card card-lobby', onClick: function () { go('lobby'); } },
+        return h('button', { class: 'panel card card-lobby ' + tcls(L.contract.tier), onClick: function () { go('lobby'); } },
             h('div', { class: 'row-between' },
                 h('div', { class: 'op-head' }, tierBadge(L.contract.tier), h('div', null, h('div', { class: 'op-code' }, L.contract.code), h('div', { class: 'dim sm' }, L.role === 'support' ? 'Crew support' : 'Your operation'))),
                 bound('span', 'mono', function (s) {
@@ -426,12 +489,16 @@
     function standingBlock(s, compact) {
         var st = s.standing;
         var frac = function (s) { var x = s.standing; return x.next > x.from ? (x.points - x.from) / (x.next - x.from) : 1; };
-        var barEl = bar(frac(s), 'bar-access');
+        var barEl = bar(frac(s), 'bar-tier');
         effect(frac, function (s) { barEl.firstChild.style.width = (Math.max(0, Math.min(1, frac(s))) * 100).toFixed(2) + '%'; });
+        var nextTier = TIERS[TIERS.indexOf(st.tier) + 1];
         return h('div', { class: 'standing' + (compact ? ' is-compact' : '') },
-            bound('div', 'standing-tier', function (s) { return s.standing.tier; }),
+            h('div', { class: 'row-between' }, bound('div', 'standing-tier', function (s) { return s.standing.tier; }),
+                nextTier ? h('div', { class: 'standing-next' }, h('span', { class: 'dim sm' }, 'NEXT'), tierBadge(nextTier, 'is-sm')) : null),
             barEl,
-            bound('div', 'mono dim', function (s) { return num(s.standing.points, 0) + ' / ' + num(s.standing.next, 0); }),
+            h('div', { class: 'row-between' },
+                bound('div', 'mono dim', function (s) { return num(s.standing.points, 0) + ' / ' + num(s.standing.next, 0); }),
+                bound('div', 'mono sm', function (s) { return num(Math.max(0, s.standing.next - s.standing.points), 0) + ' TO GO'; })),
             st.xAuth ? h('div', { class: 'x-auth' }, 'X AUTHORIZATION HELD') : null);
     }
 
@@ -459,7 +526,7 @@
     /* ---------------- 02 contracts ---------------- */
 
     VIEWS.contracts = {
-        sig: function (s) { return ['contracts', !!s.offer, s.contracts.map(function (c) { return c.id + (c.fresh ? '*' : ''); }).join('.'), !!s.lobby, !!s.operation].join(); },
+        sig: function (s) { return ['contracts', ui.tier, !!s.offer, s.contracts.map(function (c) { return c.id + (c.fresh ? '*' : ''); }).join('.'), !!s.lobby, !!s.operation].join(); },
         crumb: function () { return 'CONTRACTS'; },
         build: function (s) {
             if (s.contracts.some(function (c) { return c.fresh; })) setTimeout(function () { backend.call('seen', {}).then(receive, function () {}); }, 1500);
@@ -473,21 +540,31 @@
                         h('p', { class: 'dim' }, 'This opportunity will not remain available.'),
                         h('div', { class: 'row-end' }, h('span', { class: 'link' }, h('span', null, 'REVIEW'), glyph('arrow')))));
             }
+            var present = TIERS.filter(function (t) { return s.contracts.some(function (c) { return c.tier === t; }); });
+            if (ui.tier !== 'all' && present.indexOf(ui.tier) === -1) ui.tier = 'all';
+            var list = s.contracts.filter(function (c) { return ui.tier === 'all' || c.tier === ui.tier; });
             return h('div', { class: 'page' },
                 h('div', { class: 'page-head' }, h('h2', null, 'Contracts'),
                     bound('span', 'mono dim', function (s) { return pad(s.contracts.length) + ' AVAILABLE'; })),
+                h('div', { class: 'row-between' },
+                    tabs([['all', 'ALL', s.contracts.length]].concat(present.map(function (t) { return [t, t + '-CLASS', s.contracts.filter(function (c) { return c.tier === t; }).length]; })),
+                        ui.tier, function (v) { ui.tier = v; render(true); }),
+                    button('MAP VIEW', function () { go('map'); }, 'btn-ghost btn-sm', 'map')),
                 s.operation ? h('div', { class: 'notice' }, 'An operation is active. New contracts can be taken once it closes.') : null,
-                s.contracts.length
-                    ? h('div', { class: 'feed' }, s.contracts.map(contractCard))
+                list.length
+                    ? h('div', { class: 'feed' }, list.map(contractCard))
                     : panel('card card-empty', h('div', null, 'No contracts right now.'), h('div', { class: 'dim sm' }, 'The network sends work as your standing allows.')));
         },
     };
 
     function contractCard(c) {
-        return h('button', { class: 'panel contract', 'data-contract': c.id, onClick: function () { go('dossier', c.id); } },
+        return h('button', { class: 'panel contract ' + tcls(c.tier), 'data-contract': c.id, onClick: function () { go('dossier', c.id); } },
+            h('div', { class: 'contract-band' }),
             h('div', { class: 'contract-top' }, tierBadge(c.tier), c.fresh ? h('span', { class: 'fresh mono' }, 'NEW') : null,
                 h('span', { class: 'mono dim sm' }, c.id)),
-            h('div', { class: 'contract-code' }, c.code),
+            h('div', { class: 'contract-body' },
+                h('div', { class: 'contract-code' }, c.code),
+                c.photo && c.photo.kind !== 'none' ? h('div', { class: 'contract-thumb' }, V.photo(c.photo, c.expires - 45 * 60000)) : null),
             h('div', { class: 'kvs' }, c.fields.map(function (f) { return kv(f[0], f[1]); })),
             h('div', { class: 'contract-pay mono' }, payout(c.payout)),
             h('div', { class: 'card-foot' }, expiresEl(c), h('span', { class: 'link' }, h('span', null, 'INSPECT'), glyph('arrow'))));
@@ -517,7 +594,7 @@
                 X ? null : V.photo(c.photo, c.expires - 45 * 60000),
                 d.target ? h('div', { class: 'section' }, label('TARGET DESCRIPTION'), h('p', { class: 'prose' }, d.target)) : null,
                 h('div', { class: 'section' }, label('DOSSIER'), h('div', { class: 'kvs' }, rows)),
-                !X && c.area && c.area.name ? h('div', { class: 'section' }, label('SEARCH AREA', h('span', { class: 'mono dim' }, c.area.name)), h('div', { class: 'map is-sm' }, V.map(c.area))) : null);
+                !X && c.area && c.area.name ? h('div', { class: 'section' }, label('SEARCH AREA', h('span', { class: 'mono dim' }, c.area.name)), h('div', { class: 'map is-sm' }, V.map({ area: c.area.name, world: c.area.world, color: tierVar(c.tier) }))) : null);
 
             var action;
             if (inLobby) action = button('OPEN CREW LOBBY', function () { go('lobby'); }, 'btn-primary btn-lg', 'arrow');
@@ -541,7 +618,7 @@
                     action),
                 X ? null : h('p', { class: 'dim sm fine' }, 'Window starts when the operation begins. Details beyond this dossier are not provided.'));
 
-            return h('div', { class: 'page page-dossier' + (X ? ' is-x' : '') }, left, right);
+            return h('div', { class: 'page page-dossier ' + tcls(c.tier) + (X ? ' is-x' : '') }, left, right);
         },
     };
 
@@ -590,7 +667,7 @@
             else primary = h('div', { class: 'waiting mono' }, 'WAITING FOR ' + (L.members.filter(function (m) { return m.id === L.owner; })[0] || { handle: 'LEAD' }).handle.toUpperCase());
             if (!canBegin && lead) primary.disabled = true;
 
-            return h('div', { class: 'page page-lobby' },
+            return h('div', { class: 'page page-lobby ' + tcls(c.tier) },
                 h('div', { class: 'lobby-main' },
                     h('div', { class: 'dossier-head' }, tierBadge(c.tier, 'is-lg'), h('div', null, h('div', { class: 'lbl' }, c.tier + '-CLASS CONTRACT'), h('h2', { class: 'op-code is-lg' }, c.code))),
                     role,
@@ -607,7 +684,8 @@
                         h('button', { class: 'link link-quiet', onClick: function () {
                             ask({ title: lead ? 'DISBAND CREW' : 'LEAVE CREW', body: lead ? 'The crew is released and the contract returns to your feed.' : 'You leave this crew.', confirm: lead ? 'DISBAND' : 'LEAVE', danger: true })
                                 .then(function (ok) { if (ok) act('leave').then(function (s) { if (s) go('home'); }); });
-                        } }, h('span', null, lead ? 'DISBAND CREW' : 'LEAVE CREW')))));
+                        } }, h('span', null, lead ? 'DISBAND CREW' : 'LEAVE CREW'))),
+                    crewChannel()));
         },
     };
 
@@ -657,7 +735,7 @@
     function invitePicker() {
         var L = S.lobby;
         var inCrew = function (id) { return L.members.some(function (m) { return m.id === id; }); };
-        var people = (S.contacts || []).filter(function (p) { return !inCrew(p.id); });
+        var people = (S.contacts || []).filter(function (p) { return !inCrew(p.id) && (p.role || 'crew') === 'crew'; });
         var input = h('input', { class: 'field mono', type: 'text', placeholder: 'PLAYER ID', autocomplete: 'off', spellcheck: false, maxlength: 32 });
         var close;
         var send = function (id) { close(); act('invite', { player: id }).then(function (s) { if (s) toast('INVITATION SENT'); }); };
@@ -679,29 +757,55 @@
     /* ---------------- 14 crew (nothing assembling) ---------------- */
 
     VIEWS.crew = {
-        sig: function (s) { return ['crew', !!s.lobby, s.invites.map(function (i) { return i.id; }).join('.'), (s.crews || []).length, (s.contacts || []).length].join(); },
+        sig: function (s) { return ['crew', ui.crew, !!s.lobby, s.invites.map(function (i) { return i.id; }).join('.'), (s.crews || []).length, (s.contacts || []).length].join(); },
         crumb: function () { return 'CREW'; },
         build: function (s) {
+            var contacts = s.contacts || [];
+            var body;
+            if (ui.crew === 'contacts') {
+                var groups = [['crew', 'CREWMATES'], ['broker', 'BROKERS'], ['fixer', 'FIXERS']];
+                body = h('div', { class: 'contacts' }, groups.map(function (g) {
+                    var list = contacts.filter(function (p) { return (p.role || 'crew') === g[0]; });
+                    if (!list.length) return null;
+                    return h('div', { class: 'section' }, label(g[1], h('span', { class: 'mono dim' }, String(list.length))),
+                        h('div', { class: 'contact-grid' }, list.map(contactCard)));
+                }));
+            } else if (ui.crew === 'crews') {
+                body = (s.crews || []).length ? h('div', { class: 'table is-4' }, s.crews.map(function (c) {
+                    return h('div', { class: 'trow is-static ' + tcls(c.tier) }, tierBadge(c.tier, 'is-sm'), h('span', { class: 'mono code' }, c.code),
+                        h('span', { class: 'tags' }, c.members.map(function (m) { return h('span', { class: 'tagbox is-sm' }, m.tag); })),
+                        h('span', { class: 'mono r dim' }, when(c.when)));
+                })) : panel('card card-empty', h('div', { class: 'dim' }, 'None yet'));
+            } else {
+                body = s.invites.length ? h('div', { class: 'list' }, s.invites.map(inviteRow)) : panel('card card-empty', h('div', { class: 'dim' }, 'No invitations'), h('div', { class: 'dim sm' }, 'Crew leads invite you from their lobby.'));
+            }
             return h('div', { class: 'page' },
                 h('div', { class: 'page-head' }, h('h2', null, 'Crew'), h('span', { class: 'dim sm' }, 'Crews form per operation.')),
-                h('div', { class: 'section' }, label('INVITATIONS'),
-                    s.invites.length ? h('div', { class: 'list' }, s.invites.map(inviteRow)) : panel('card card-empty', h('div', { class: 'dim' }, 'No invitations'))),
-                h('div', { class: 'grid-2 is-top' },
-                    h('div', { class: 'section' }, label('RECENT CREWS'),
-                        (s.crews || []).length ? h('div', { class: 'table is-4' }, s.crews.map(function (c) {
-                            return h('div', { class: 'trow is-static' }, tierBadge(c.tier, 'is-sm'), h('span', { class: 'mono code' }, c.code),
-                                h('span', { class: 'tags' }, c.members.map(function (m) { return h('span', { class: 'tagbox is-sm' }, m.tag); })),
-                                h('span', { class: 'mono r dim' }, when(c.when)));
-                        })) : panel('card card-empty', h('div', { class: 'dim' }, 'None yet'))),
-                    h('div', { class: 'section' }, label('RECENT PLAYERS'),
-                        (s.contacts || []).length ? h('div', { class: 'table is-4' }, s.contacts.map(function (p) {
-                            return h('div', { class: 'trow is-static' }, h('span', { class: 'tagbox' }, p.tag), h('span', null, p.handle),
-                                h('span', { class: 'mono sm ' + (p.nearby ? 'pos' : 'dim') }, p.nearby ? '● NEARBY' : ''),
-                                h('span', { class: 'mono r dim' }, p.last ? when(p.last) : '—'));
-                        })) : panel('card card-empty', h('div', { class: 'dim' }, 'None yet')),
-                        h('p', { class: 'dim sm fine' }, 'Invite people from a crew lobby after you take a contract.'))));
+                tabs([['invites', 'INVITATIONS', s.invites.length], ['contacts', 'CONTACTS', 0], ['crews', 'RECENT CREWS', 0]], ui.crew, function (v) { ui.crew = v; render(true); }),
+                body);
         },
     };
+
+    var ROLE = { crew: 'CREWMATE', broker: 'BROKER', fixer: 'FIXER' };
+    function contactCard(p) {
+        return h('button', { class: 'panel contact is-' + (p.role || 'crew'), 'data-contact': p.id, onClick: function () { contactSheet(p); } },
+            h('div', { class: 'row-between' }, h('span', { class: 'tagbox is-lg' }, p.tag), p.nearby ? h('span', { class: 'mono sm pos' }, '● NEARBY') : h('span', { class: 'mono sm dim' }, p.last ? when(p.last) : '—')),
+            h('div', null, h('div', { class: 'contact-name' }, p.handle), h('div', { class: 'lbl' }, ROLE[p.role || 'crew'])),
+            h('div', { class: 'row-between' }, trust(p.trust), h('span', { class: 'mono sm dim' }, (p.jobs || 0) + ' JOBS')));
+    }
+    function contactSheet(p) {
+        var t = p.thread && threads(S).filter(function (x) { return x.id === p.thread; })[0];
+        var close = sheet(ROLE[p.role || 'crew'], h('div', { class: 'contact-detail' },
+            h('div', { class: 'row-inline' }, h('span', { class: 'tagbox is-lg' }, p.tag), h('div', null, h('div', { class: 'contact-name is-lg' }, p.handle), h('div', { class: 'dim mono sm' }, p.nearby ? '● NEARBY' : p.last ? 'LAST CONTACT ' + when(p.last) : 'NO RECENT CONTACT'))),
+            h('div', { class: 'kvs' },
+                kv('TRUST', h('span', { class: 'v' }, trust(p.trust))),
+                kv(p.role === 'crew' || !p.role ? 'JOBS TOGETHER' : 'CONTRACTS BROKERED', String(p.jobs || 0)),
+                p.role === 'crew' || !p.role ? kv('EARNED TOGETHER', money(p.earned || 0)) : null),
+            h('div', { class: 'row-end' },
+                t ? button('MESSAGE', function () { close(); go('comms', t.id); }, 'btn-primary btn-sm', 'comms') : null,
+                S.lobby && S.lobby.owner === S.player.id && (p.role || 'crew') === 'crew' && !S.lobby.members.some(function (m) { return m.id === p.id; })
+                    ? button('INVITE TO CREW', function () { close(); act('invite', { player: p.id }).then(function (s) { if (s) toast('INVITATION SENT'); }); }, 'btn-ghost btn-sm') : null)));
+    }
 
     /* ---------------- 05–09 operation terminal ---------------- */
 
@@ -721,7 +825,7 @@
             drawMap();
             effect(function (s) { var m = s.operation.map; return [m.area, m.world, m.point]; }, drawMap);
 
-            return h('div', { class: 'page page-op' },
+            return h('div', { class: 'page page-op ' + tcls(c.tier) },
                 h('div', { class: 'op-top' },
                     h('div', { class: 'op-head' }, tierBadge(c.tier, 'is-lg'),
                         h('div', null, h('h2', { class: 'op-code is-lg' }, c.code), h('div', { class: 'op-state' }, h('i', { class: 'pulse' }), 'OPERATION ACTIVE',
@@ -740,6 +844,7 @@
                                 h('span', { class: 'dim mono sm' }, 'LAST UPDATE ', (function () { var e = h('span'); tick(function () { if (S.operation) e.textContent = ago(S.operation.map.updated).toUpperCase(); }); return e; })())),
                             mapBox)),
                     h('div', { class: 'op-side' },
+                        s.heat ? panel('heat-card', heatMeter()) : null,
                         panel('intel', label('INTEL'), h('div', { class: 'kvs' }, op.intel.map(function (i, idx) {
                             return h('div', { class: 'kv' }, h('span', { class: 'k' }, i.k),
                                 bound('span', 'v', function (s) { var x = s.operation.intel[idx]; return { text: x.v, cls: levelCls(x.level), tone: x.level === 'alert' ? 'alert' : null }; }, 'intel:' + i.k));
@@ -753,9 +858,27 @@
                             draw();
                             effect(function (s) { return s.operation.log.length; }, function () { draw(); if (box.firstChild) flash(box.firstChild); });
                             return box;
-                        })()))));
+                        })()),
+                        crewChannel())));
         },
     };
+
+    /** The last few lines of the open crew channel, updated live. */
+    function crewChannel() {
+        var t = threads(S).filter(function (x) { return x.kind === 'crew' && x.open; })[0];
+        if (!t) return null;
+        var box = h('div', { class: 'channel' });
+        var draw = function () {
+            var tt = threads(S).filter(function (x) { return x.id === t.id; })[0];
+            fill(box, (tt ? tt.messages : []).filter(function (m) { return !m.system; }).slice(-3).map(function (m) {
+                return h('div', { class: 'channel-row' }, h('span', { class: 'mono sm' }, m.from.tag), h('span', null, m.text));
+            }));
+            if (!box.children.length) box.append(h('div', { class: 'dim sm' }, 'Channel open. No messages yet.'));
+        };
+        draw();
+        effect(function (s) { var x = threads(s).filter(function (y) { return y.id === t.id; })[0]; return x ? x.messages.length : 0; }, function () { draw(); if (box.lastChild) flash(box.lastChild); });
+        return panel('channel-card', h('div', { class: 'row-between' }, label('CREW CHANNEL', h('span', { class: 'mono dim' }, glyph('lock'))), link('OPEN', function () { go('comms', t.id); })), box);
+    }
 
     function trackerPanel() {
         var tr = function (s) { return s.operation.tracker; };
@@ -897,42 +1020,187 @@
         setTimeout(function () { requestAnimationFrame(step); }, 200);
     }
 
+    /* ---------------- map ---------------- */
+
+    VIEWS.map = {
+        sig: function (s) { return ['map', ui.tier, s.contracts.map(function (c) { return c.id; }).join('.'), !!s.operation && s.operation.id, !!s.offer].join(); },
+        crumb: function () { return 'MAP'; },
+        build: function (s) {
+            var zones = s.contracts.filter(function (c) { return ui.tier === 'all' || c.tier === ui.tier; }).map(function (c) {
+                return { id: c.id, name: c.area && c.area.name, world: c.area && c.area.world, color: tierVar(c.tier), label: c.tier + ' · ' + c.code };
+            });
+            var op = s.operation;
+            if (op && op.map) zones.unshift({ id: '__op', name: op.map.area, world: op.map.world, color: 'var(--net-ok)', label: 'ACTIVE · ' + op.contract.code, active: true });
+            var box = h('div', { class: 'map is-city' }, V.cityMap({
+                zones: zones,
+                points: op && op.map.point ? [{ x: op.map.point.x, y: op.map.point.y, color: 'var(--net-ok)' }] : [],
+                onZone: function (id) { if (id === '__op') go('operation'); else go('dossier', id); },
+            }));
+            var present = TIERS.filter(function (t) { return s.contracts.some(function (c) { return c.tier === t; }); });
+            return h('div', { class: 'page page-map' },
+                h('div', { class: 'page-head' }, h('h2', null, 'City'), h('span', { class: 'dim sm' }, 'Areas are approximate. The network never gives more than it knows.')),
+                tabs([['all', 'ALL']].concat(present.map(function (t) { return [t, t + '-CLASS']; })), ui.tier, function (v) { ui.tier = v; render(true); }),
+                h('div', { class: 'map-layout' },
+                    box,
+                    h('div', { class: 'map-legend' },
+                        op ? h('button', { class: 'legend-row is-active', onClick: function () { go('operation'); } }, h('i', { style: { background: 'var(--net-ok)' } }),
+                            h('div', null, h('b', { class: 'mono' }, op.contract.code), h('div', { class: 'dim sm' }, 'ACTIVE · ' + (op.map.area || '—')))) : null,
+                        zones.filter(function (z) { return z.id !== '__op'; }).map(function (z) {
+                            var c = findContract(z.id);
+                            return h('button', { class: 'legend-row ' + tcls(c.tier), 'data-zone-row': c.id, onClick: function () { go('dossier', c.id); } }, h('i', { style: { background: z.color } }),
+                                h('div', null, h('b', { class: 'mono' }, c.code), h('div', { class: 'dim sm' }, (c.area && c.area.name) || '—')),
+                                h('span', { class: 'mono sm' }, payout(c.payout)));
+                        }),
+                        !zones.length ? h('p', { class: 'dim' }, 'No areas to show.') : null)));
+        },
+    };
+
+    /* ---------------- comms ---------------- */
+
+    function lastMsg(t) { return t.messages[t.messages.length - 1]; }
+    function threadRow(t) {
+        var m = lastMsg(t);
+        return h('button', { class: 'thread' + (t.unread ? ' is-unread' : '') + ' is-' + t.kind + (route.view === 'comms' && route.id === t.id ? ' is-open' : ''), 'data-thread': t.id, onClick: function () { go('comms', t.id); } },
+            h('span', { class: 'tagbox' + (t.kind === 'crew' ? ' is-crew' : '') }, t.kind === 'crew' ? glyph('lock') : (t.contact && t.contact.tag) || '—'),
+            h('div', { class: 'thread-text' },
+                h('div', { class: 'row-between' }, h('b', { class: 'mono' }, t.title), h('span', { class: 'mono sm dim' }, m ? when(m.t) : '')),
+                h('span', { class: 'dim thread-last' }, m ? (m.from && m.from.id === (S.player && S.player.id) ? 'You: ' : '') + m.text : '')),
+            t.unread ? h('b', { class: 'pill-count' }, String(t.unread)) : null);
+    }
+
+    VIEWS.comms = {
+        sig: function (s) {
+            return ['comms', ui.comms, route.id, threads(s).map(function (t) { return t.id + ':' + t.messages.length + ':' + (t.unread ? 1 : 0) + (t.open ? 'o' : ''); }).join('.')].join();
+        },
+        crumb: function () { return 'COMMS'; },
+        build: function (s) {
+            var all = threads(s).slice().sort(function (a, b) { return ((lastMsg(b) || {}).t || 0) - ((lastMsg(a) || {}).t || 0); });
+            var list = all.filter(function (t) { return ui.comms === 'all' || t.kind === ui.comms; });
+            var open = all.filter(function (t) { return t.id === route.id; })[0] || null;
+            if (open && open.unread) setTimeout(function () { backend.call('read', { thread: open.id }).then(receive, function () {}); }, 400);
+            var unread = function (k) { return all.filter(function (t) { return k === 'all' || t.kind === k; }).reduce(function (a, t) { return a + (t.unread || 0); }, 0); };
+            return h('div', { class: 'page page-comms' },
+                h('div', { class: 'comms-list' },
+                    h('div', { class: 'page-head' }, h('h2', null, 'Comms'), h('span', { class: 'mono sm dim' }, glyph('lock'), ' ENCRYPTED')),
+                    tabs([['all', 'ALL', unread('all')], ['broker', 'CONTACTS', unread('broker')], ['crew', 'CREW', unread('crew')]], ui.comms, function (v) { ui.comms = v; render(true); }),
+                    list.length ? h('div', { class: 'list tight' }, list.map(threadRow)) : panel('card card-empty', h('div', { class: 'dim' }, 'No channels'))),
+                open ? conversation(open) : h('div', { class: 'convo is-empty' }, glyph('comms'), h('div', { class: 'dim' }, 'Select a channel')));
+        },
+    };
+
+    function conversation(t) {
+        var me = S.player.id;
+        var box = h('div', { class: 'convo-scroll' }, t.messages.map(function (m) {
+            if (m.system || !m.from) return h('div', { class: 'msg is-system mono' }, m.text);
+            var mine = m.from.id === me;
+            var att = m.attach && m.attach.contract ? findContract(m.attach.contract) : null;
+            return h('div', { class: 'msg' + (mine ? ' is-mine' : '') },
+                mine ? null : h('span', { class: 'tagbox is-sm' }, m.from.tag),
+                h('div', { class: 'bubble' },
+                    mine ? null : h('div', { class: 'msg-from mono' }, m.from.handle.toUpperCase(), m.tag ? h('span', { class: 'msg-tag' }, m.tag) : null),
+                    h('div', null, m.text),
+                    att ? h('button', { class: 'msg-attach ' + tcls(att.tier), onClick: function () { go('dossier', att.id); } }, tierBadge(att.tier, 'is-sm'), h('b', { class: 'mono' }, att.code), h('span', { class: 'mono sm' }, payout(att.payout)), glyph('arrow')) : null,
+                    h('div', { class: 'msg-time mono' }, clock(m.t))));
+        }));
+        var closed = t.kind === 'crew' && !t.open;
+        var input = h('input', { class: 'field', type: 'text', placeholder: closed ? 'Channel closed' : 'Message ' + t.title.toLowerCase().replace(/(^|\s)\S/g, function (x) { return x.toUpperCase(); }), maxlength: 240, autocomplete: 'off', disabled: closed });
+        var send = function () {
+            var v = input.value.trim();
+            if (!v) return;
+            input.value = '';
+            backend.call('send', { thread: t.id, text: v }).then(function (s) { receive(s); var f = document.querySelector('.composer .field'); if (f) f.focus(); }, function (e) { toast(String(e.message).toUpperCase(), 'danger'); });
+        };
+        input.addEventListener('keydown', function (e) { if (e.key === 'Enter') send(); });
+        setTimeout(function () { box.scrollTop = box.scrollHeight; });
+        return h('div', { class: 'convo is-' + t.kind },
+            h('div', { class: 'convo-head' },
+                h('div', null, h('b', { class: 'mono' }, t.title), h('div', { class: 'dim sm mono' }, t.kind === 'crew' ? (closed ? 'CHANNEL CLOSED' : 'CREW CHANNEL · ENCRYPTED') : 'DIRECT · ENCRYPTED')),
+                t.kind === 'crew' && !closed && (S.operation || S.lobby) ? link(S.operation ? 'OPERATION' : 'LOBBY', function () { go(S.operation ? 'operation' : 'lobby'); }) : null),
+            box,
+            h('div', { class: 'composer' }, input, h('button', { class: 'icon-btn is-send', title: 'Send', disabled: closed, onClick: send }, glyph('send'))));
+    }
+
     /* ---------------- 12 profile ---------------- */
 
     VIEWS.profile = {
-        sig: function (s) { return ['profile', s.standing.tier, s.standing.xAuth, s.history.length].join(); },
+        sig: function (s) { return ['profile', ui.profile, s.standing.tier, s.standing.xAuth, s.history.length].join(); },
         crumb: function () { return 'PROFILE'; },
         build: function (s) {
             var st = s.standing, stats = s.stats || {};
-            var ladder = (st.ladder || []).map(function (l) {
-                var right;
-                if (l.state === 'current') {
-                    right = h('div', { class: 'ladder-bar' }, bar(st.next > st.from ? (st.points - st.from) / (st.next - st.from) : 1, 'bar-access'),
-                        h('span', { class: 'mono' }, num(st.points, 0) + ' / ' + num(st.next, 0)));
-                } else {
-                    right = h('span', { class: 'mono ' + (l.state === 'complete' ? 'pos' : l.state === 'available' ? 'warn' : 'dim') },
-                        { complete: 'COMPLETE', locked: 'LOCKED', none: '—', available: 'AUTHORIZED' }[l.state] || l.state.toUpperCase());
-                }
-                return h('div', { class: 'ladder-row is-' + l.state }, tierBadge(l.tier, 'is-sm'), right);
-            });
-            var statCell = function (k, v) { return h('div', { class: 'stat' }, h('div', { class: 'lbl' }, k), h('div', { class: 'stat-v mono' }, v)); };
+            var body = ui.profile === 'stats' ? statsTab(s) : ui.profile === 'history' ? historyTab(s) : standingTab(s);
             return h('div', { class: 'page page-profile' },
-                h('div', { class: 'profile-top' },
-                    h('div', { class: 'access' }, h('div', { class: 'lbl' }, 'ACCESS LEVEL'), h('div', { class: 'access-tier' }, st.tier), h('div', { class: 'mono dim' }, s.player.tag + ' · ' + s.player.handle.toUpperCase())),
-                    panel('ladder', label('NETWORK STANDING'), ladder)),
-                h('div', { class: 'stats' },
-                    statCell('CONTRACTS COMPLETED', num(stats.completed || 0, 0)),
-                    statCell('CONTRACTS FAILED', num(stats.failed || 0, 0)),
-                    statCell('VEHICLES DELIVERED', num(stats.delivered || 0, 0)),
-                    statCell('TOTAL EARNED', money(stats.earned || 0)),
-                    statCell('CURRENT STREAK', num(stats.streak || 0, 0)),
-                    statCell('HIGHEST ACCESS', st.highest || st.tier)),
-                h('div', { class: 'section' }, label('HISTORY'),
-                    s.history.length ? h('div', { class: 'table is-dated' }, s.history.map(function (e) {
-                        return h('div', { class: 'trow is-static' }, h('span', { class: 'mono dim' }, day(e.when)), h('span', { class: 'mono code' }, e.code), tierBadge(e.tier, 'is-sm'), outcomeCell(e.outcome), h('span', { class: 'mono r dim' }, e.role === 'support' ? 'SUPPORT' : ''));
-                    })) : panel('card card-empty', h('div', { class: 'dim' }, 'No history yet'))));
+                h('div', { class: 'profile-hero ' + tcls(st.tier) },
+                    h('div', { class: 'access' }, h('div', { class: 'lbl' }, 'ACCESS LEVEL'), h('div', { class: 'access-tier' }, st.tier)),
+                    h('div', { class: 'profile-id' },
+                        h('div', { class: 'contact-name is-lg' }, s.player.handle), h('div', { class: 'mono dim' }, s.player.tag + ' · SESSION ' + session),
+                        h('div', { class: 'hero-chips' },
+                            chip('COMPLETED', num(stats.completed || 0, 0), 'var(--net-ok)'),
+                            chip('EARNED', money(stats.earned || 0), 'var(--t-b)'),
+                            chip('HIGHEST', st.highest || st.tier, tierVar(st.highest || st.tier)))),
+                    s.heat ? heatMeter(true) : null),
+                tabs([['standing', 'STANDING'], ['stats', 'STATISTICS'], ['history', 'HISTORY', 0]], ui.profile, function (v) { ui.profile = v; render(true); }),
+                body);
         },
     };
+
+    function standingTab(s) {
+        var st = s.standing, stats = s.stats || {};
+        var ladder = (st.ladder || []).map(function (l) {
+            var right;
+            if (l.state === 'current') {
+                right = h('div', { class: 'ladder-bar' }, bar(st.next > st.from ? (st.points - st.from) / (st.next - st.from) : 1, 'bar-tier'),
+                    h('span', { class: 'mono' }, num(st.points, 0) + ' / ' + num(st.next, 0)));
+            } else {
+                right = h('span', { class: 'mono ' + (l.state === 'complete' ? 'pos' : l.state === 'available' ? 'warn' : 'dim') },
+                    { complete: 'COMPLETE', locked: 'LOCKED', none: '—', available: 'AUTHORIZED' }[l.state] || l.state.toUpperCase());
+            }
+            return h('div', { class: 'ladder-row is-' + l.state + ' ' + tcls(l.tier) }, tierBadge(l.tier, 'is-sm'), right);
+        });
+        var hist = stats.tierHistory || [];
+        return h('div', { class: 'grid-2 is-top' },
+            panel('ladder ' + tcls(st.tier), label('NETWORK STANDING'), ladder),
+            panel('card', h('div', { class: 'row-between' }, label('STANDING · 30 DAYS'), h('span', { class: 'mono pos' }, hist.length > 1 ? '+' + num(hist[hist.length - 1].v - hist[0].v, 0) : '')),
+                h('div', { class: 'chart-box is-tall' }, V.line(hist, { color: tierVar(st.tier), height: 120 })),
+                h('p', { class: 'dim sm' }, st.xAuth ? 'You hold an X authorization. It is consumed when you lead an X operation.' : 'Standing moves with every contract you lead. Crew support earns crypto, not standing.')));
+    }
+
+    function statsTab(s) {
+        var stats = s.stats || {};
+        var earnings = stats.earnings || [];
+        var total = stats.completed + stats.failed;
+        var rate = total ? stats.completed / total : 0;
+        var classes = stats.byClass || [];
+        var palette = ['var(--t-b)', 'var(--t-c)', 'var(--t-a)', 'var(--t-x)', 'var(--t-d)', '#9b7bd4'];
+        var statCell = function (k, v, c) { return h('div', { class: 'stat', style: c ? { '--c': c } : null }, h('div', { class: 'lbl' }, k), h('div', { class: 'stat-v mono' }, v)); };
+        return h('div', { class: 'stats-page' },
+            h('div', { class: 'grid-3' },
+                panel('card', label('SUCCESS RATE'),
+                    h('div', { class: 'donut-wrap' }, V.donut([{ value: stats.completed || 0, color: 'var(--net-ok)' }, { value: stats.failed || 0, color: 'var(--net-danger)' }], 130, 14),
+                        h('div', { class: 'donut-center' }, h('b', { class: 'mono' }, Math.round(rate * 100) + '%'), h('span', { class: 'dim sm' }, total + ' contracts')))),
+                panel('card span-2', h('div', { class: 'row-between' }, label('EARNINGS · 14 DAYS'), h('span', { class: 'mono pos' }, '+' + money(earnings.reduce(function (a, d) { return a + d.v; }, 0)))),
+                    h('div', { class: 'chart-box' }, V.bars(earnings.map(function (d, i) { return { value: d.v, label: i % 2 ? '' : String(new Date(d.t).getDate()), color: i === earnings.length - 1 ? 'var(--net-ok)' : 'var(--t-b)', title: day(d.t) + ' · ' + money(d.v) }; }), { height: 120 })))),
+            h('div', { class: 'grid-2 is-top' },
+                panel('card', label('DELIVERIES BY CLASS'),
+                    h('div', { class: 'class-bars' }, classes.map(function (c, i) {
+                        var max = Math.max.apply(null, classes.map(function (x) { return x.n; }).concat([1]));
+                        return h('div', { class: 'class-row' }, h('span', { class: 'mono sm' }, c.k), h('div', { class: 'bar' }, h('i', { style: { width: (c.n / max * 100) + '%', background: palette[i % palette.length] } })), h('span', { class: 'mono sm r' }, String(c.n)));
+                    }))),
+                h('div', { class: 'stats' },
+                    statCell('CONTRACTS COMPLETED', num(stats.completed || 0, 0), 'var(--net-ok)'),
+                    statCell('CONTRACTS FAILED', num(stats.failed || 0, 0), 'var(--net-danger)'),
+                    statCell('VEHICLES DELIVERED', num(stats.delivered || 0, 0), 'var(--t-b)'),
+                    statCell('TOTAL EARNED', money(stats.earned || 0), 'var(--net-ok)'),
+                    statCell('CURRENT STREAK', num(stats.streak || 0, 0), 'var(--t-a)'),
+                    statCell('BEST SHARE', stats.bestShare ? money(stats.bestShare) : '—', 'var(--t-a)'))));
+    }
+
+    function historyTab(s) {
+        return s.history.length ? h('div', { class: 'table is-dated' }, s.history.map(function (e) {
+            return h('button', { class: 'trow ' + tcls(e.tier), onClick: function () { if (e.report) go('report', e.report.id); } },
+                h('span', { class: 'mono dim' }, day(e.when)), h('span', { class: 'mono code' }, e.code), tierBadge(e.tier, 'is-sm'), outcomeCell(e.outcome),
+                h('span', { class: 'mono r ' + (e.share ? 'pos' : 'dim') }, e.share ? '+' + money(e.share) : e.role === 'support' ? 'SUPPORT' : '—'));
+        })) : panel('card card-empty', h('div', { class: 'dim' }, 'No history yet'));
+    }
 
     /* ================================================================== */
     /* boot / unavailable                                                  */
@@ -987,12 +1255,14 @@
     function handleLaunch(d) {
         if (!d || typeof d !== 'object' || !S) return false;
         var target = null;
-        if (typeof d.result === 'string') target = ['report', findReport(d.result) ? d.result : (S.result && S.result.id)];
+        if (typeof d.thread === 'string') target = ['comms', d.thread];
+        else if (typeof d.result === 'string') target = ['report', findReport(d.result) ? d.result : (S.result && S.result.id)];
         else if (typeof d.invite === 'string') target = [S.lobby ? 'lobby' : 'crew'];
         else if (typeof d.contract === 'string' && findContract(d.contract)) target = ['dossier', d.contract];
         else if (d.view === 'operation') target = ['operation'];
         else if (d.view === 'lobby') target = ['lobby'];
-        else if (typeof d.view === 'string' && VIEWS[d.view] && d.view !== 'report' && d.view !== 'dossier') target = [d.view];
+        else if (typeof d.view === 'string' && VIEWS[d.view] && d.view !== 'report' && d.view !== 'dossier' && d.view !== 'comms') target = [d.view];
+        else if (d.view === 'comms') target = ['comms'];
         if (!target) return false;
         if (target[0] === 'report' && target[1]) shownResult = target[1];
         if (document.getElementById('main')) go(target[0], target[1]);

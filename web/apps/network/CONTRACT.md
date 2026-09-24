@@ -50,6 +50,8 @@ shown to the player as-is, so keep it short and in-world.
 | `leave` | – | Lead: disband. Member: leave. |
 | `accept` / `decline` | `{ invite = id }` | Answer an invitation. |
 | `ack` | `{ result = id }` | The player closed the report. Clear `State.result`. |
+| `send` | `{ thread = id, text }` | Post to a comms thread (≤ 240 chars). Refuse on a closed crew channel. Relay to the other members. |
+| `read` | `{ thread = id }` | The player opened a thread. Set its `unread` to 0. |
 
 Validate everything on the server (`lib/validate.lua` + `lib/guard.lua`). The app enforces
 nothing that matters.
@@ -76,10 +78,12 @@ Use the tablet's `notify` with `appId = 'pdr.network'`. `data` is the deep link:
 | `{ view = 'lobby' }` | The crew lobby |
 | `{ view = 'operation' }` | The operation terminal |
 | `{ result = id }` | That report |
+| `{ thread = id }` | That comms thread |
+| `{ view = 'comms' \| 'map' \| 'profile' }` | That screen |
 
 Keep them terse: title `NETWORK` or the codename, body one line ("Target identified.",
 "Tracksuit confirmed the split.", "Private offer received."). The app sets its own badge from
-`invites`, `result` and `offer`.
+`invites`, `result`, `offer` and unread comms.
 
 ## State
 
@@ -101,9 +105,30 @@ State = {
     result    = Result | nil,          -- an unacknowledged report; opening the app shows it
     invites   = { { id, from = Player, contract = Contract, sent = ms }, … },
     history   = { { id, code, tier, outcome = 'complete'|'failed', share, when = ms, role, report = Result }, … },
-    stats     = { completed, failed, delivered, earned, streak },
+    stats     = {
+        completed, failed, delivered, earned, streak, bestShare,
+        earnings    = { { t = ms, v = 12.4 }, … },          -- one per day, oldest first (the app shows 7 and 14 days)
+        byClass     = { { k = 'SPORTS', n = 8 }, … },       -- deliveries by vehicle class
+        tierHistory = { { t = ms, v = 1840 }, … },          -- standing points over time (30-day chart)
+    },
+    heat      = { level = 0.0 … 1.0, label = 'LOW'|'ELEVATED'|'HIGH' } | nil,   -- optional; omit to hide the meter
+    comms     = { threads = { Thread, … } },
     crews     = { { id, code, tier, when, members = { Player, … } }, … },   -- recent crews
-    contacts  = { { id, handle, tag, nearby = true, last = ms|nil }, … },   -- who can be invited
+    contacts  = { {                                                           -- crewmates, brokers, fixers
+        id, handle, tag, role = 'crew'|'broker'|'fixer', trust = 0 … 100, jobs, earned,
+        nearby = true, last = ms|nil, thread = threadId|nil,                  -- thread: MESSAGE button
+    }, … },
+}
+
+Thread = {
+    id, kind = 'broker'|'crew', title = 'BROKER 7Q', contact = Player|nil, unread = 1,
+    open = true,                     -- crew channels only: false = read-only history
+    messages = { {                   -- oldest first
+        id, t = ms, from = Player|nil, text,
+        system = true,               -- centred channel notice ("Channel opened.")
+        tag = 'TIP',                 -- optional label on the message
+        attach = { contract = id },  -- optional: a tappable contract card
+    }, … },
 }
 ```
 
@@ -128,6 +153,9 @@ Contract = {
     warning = 'Accepting this operation consumes your current X authorization.',   -- asked before assembling
 }
 ```
+
+Every contract surface (card, dossier, lobby, operation header, map zone) is coloured by its
+tier: D grey, C green, B blue, A amber, X red.
 
 `photo.url` can point to your own degraded image. Without it, the app draws a CCTV-style
 silhouette from `shape`.

@@ -135,6 +135,47 @@
         });
     }
 
+    function seedStats(now) {
+        var D = 86400000, r = 7, rnd = function () { r = (r * 16807) % 2147483647; return r / 2147483647; };
+        var earnings = [];
+        for (var i = 13; i >= 0; i--) {
+            var t = now - i * D;
+            earnings.push({ t: t, v: rnd() < 0.3 ? 0 : +(4 + rnd() * 22).toFixed(2) });
+        }
+        var tierHistory = [];
+        for (var j = 30; j >= 0; j--) tierHistory.push({ t: now - j * D, v: Math.round(900 + (30 - j) * 31 + (rnd() - 0.5) * 60) });
+        tierHistory[tierHistory.length - 1].v = 1840;
+        return {
+            completed: 23, failed: 4, delivered: 23, earned: 214.6, streak: 3, fastest: 11 * 60000 + 42000, bestShare: 24.8,
+            earnings: earnings,
+            byClass: [{ k: 'SPORTS', n: 8 }, { k: 'SEDAN', n: 7 }, { k: 'COMPACT', n: 5 }, { k: 'SUV', n: 2 }, { k: 'SUPER', n: 1 }],
+            tierHistory: tierHistory,
+        };
+    }
+
+    function seedComms(now, sentinelId) {
+        var b7q = { id: 'b7q', handle: 'Broker 7Q', tag: '7Q' }, lou = { id: 'lou', handle: 'Lou', tag: 'LOU' }, unk = { id: 'unk', handle: 'Unknown', tag: '???' };
+        return [
+            { id: 't-7q', kind: 'broker', title: 'BROKER 7Q', contact: b7q, unread: 1, messages: [
+                { id: 'm1', from: b7q, t: now - 3 * 3600000 - 600000, text: 'Clean work on MARROW. The client noticed.' },
+                { id: 'm2', from: b7q, t: now - 38 * 60000, text: 'Something on the west side if you want it. Sports class, quiet street. Don’t make noise.', attach: { contract: sentinelId } },
+            ] },
+            { id: 't-lou', kind: 'broker', title: 'LOU', contact: lou, unread: 1, messages: [
+                { id: 'm3', from: lou, t: now - 2 * 3600000, text: 'Heard Vinewood patrols doubled after midnight. Just saying.', tag: 'TIP' },
+            ] },
+            { id: 't-unk', kind: 'broker', title: 'UNKNOWN', contact: unk, unread: 0, messages: [
+                { id: 'm4', from: unk, t: now - 26 * 3600000, text: 'Your progress has been noted.' },
+            ] },
+        ];
+    }
+
+    var CHATTER = {
+        identify: ['Got eyes on it. Parked behind the pool house.', 'That’s the one. Owner just went inside.'],
+        bypass: ['Tracker’s pinging. Pull over somewhere dark.', 'We’re in. It’s talking to someone though.'],
+        untrack: ['Clean. Go.', 'Signal’s dead. Drop-off is coming through.'],
+        reply: ['Copy.', 'On my way.', 'Two minutes.', 'Seen.', 'Keep it quiet.', 'Understood.'],
+    };
+
     function DemoWorld(T) {
         var listeners = [];
         var timers = [];
@@ -151,18 +192,59 @@
             result: null,
             invites: [],
             history: seedHistory(now),
-            stats: { completed: 23, failed: 4, delivered: 23, earned: 214.6, streak: 3 },
+            stats: seedStats(now),
+            heat: { level: 0.18, label: 'LOW' },
+            comms: { threads: [] },
             crews: [
                 { id: 'c1', code: 'MARROW', tier: 'B', when: now - 3 * 3600000, members: [PEOPLE.p2, PEOPLE.p3] },
                 { id: 'c2', code: 'GHOST', tier: 'B', when: now - 86400000 - 9 * 3600000, members: [PEOPLE.p4] },
             ],
             contacts: [
-                { id: 'p2', handle: 'Tracksuit', tag: 'TRK', nearby: true, last: now - 3 * 3600000 },
-                { id: 'p3', handle: 'Kai', tag: 'KAI', nearby: true, last: now - 3 * 3600000 },
-                { id: 'p4', handle: 'Vero', tag: 'VRO', nearby: false, last: now - 86400000 - 9 * 3600000 },
-                { id: 'p5', handle: 'Dutch', tag: 'DTC', nearby: false, last: null },
+                { id: 'p2', handle: 'Tracksuit', tag: 'TRK', role: 'crew', trust: 82, jobs: 11, earned: 96.4, nearby: true, last: now - 3 * 3600000 },
+                { id: 'p3', handle: 'Kai', tag: 'KAI', role: 'crew', trust: 64, jobs: 6, earned: 51.2, nearby: true, last: now - 3 * 3600000 },
+                { id: 'p4', handle: 'Vero', tag: 'VRO', role: 'crew', trust: 45, jobs: 3, earned: 22.9, nearby: false, last: now - 86400000 - 9 * 3600000 },
+                { id: 'p5', handle: 'Dutch', tag: 'DTC', role: 'crew', trust: 20, jobs: 0, earned: 0, nearby: false, last: null },
+                { id: 'b7q', handle: 'Broker 7Q', tag: '7Q', role: 'broker', trust: 72, jobs: 14, earned: 0, nearby: false, last: now - 38 * 60000, thread: 't-7q' },
+                { id: 'b2c', handle: 'Broker 2C', tag: '2C', role: 'broker', trust: 36, jobs: 2, earned: 0, nearby: false, last: now - 5 * 86400000 },
+                { id: 'lou', handle: 'Lou', tag: 'LOU', role: 'fixer', trust: 55, jobs: 4, earned: 0, nearby: false, last: now - 2 * 3600000, thread: 't-lou' },
             ],
         };
+        s.comms.threads = seedComms(now, s.contracts[0].id);
+
+        function heat(level) {
+            s.heat = { level: level, label: level < 0.3 ? 'LOW' : level < 0.6 ? 'ELEVATED' : 'HIGH' };
+        }
+        function thread(id) { return s.comms.threads.filter(function (t) { return t.id === id; })[0]; }
+        var mid = 0;
+        function post(tid, from, text, extra) {
+            var t = thread(tid);
+            if (!t) return;
+            var m = { id: 'm' + Date.now().toString(36) + (++mid), from: from, t: Date.now(), text: text };
+            for (var k in extra || {}) m[k] = extra[k];
+            t.messages.push(m);
+            if (from && from.id !== s.player.id) {
+                t.unread++;
+                if (T.inTablet && !T.visible) T.notify({ title: t.title, body: text, data: { thread: tid } });
+            }
+            return m;
+        }
+        function crewThread() { return s.comms.threads.filter(function (t) { return t.kind === 'crew' && t.open; })[0]; }
+        function chatter(key) {
+            var t = crewThread(), op = s.operation;
+            if (!t || !op) return;
+            var mates = op.crew.filter(function (m) { return m.id !== s.player.id && m.online; });
+            if (!mates.length) return;
+            var who = mates[Math.floor(Math.random() * mates.length)];
+            var lines = CHATTER[key];
+            later(700, function () { post(t.id, { id: who.id, handle: who.handle, tag: who.tag }, lines[Math.floor(Math.random() * lines.length)]); push(); });
+        }
+        function openCrewThread(L) {
+            s.comms.threads.forEach(function (t) { if (t.kind === 'crew') t.open = false; });
+            var t = { id: 'crew-' + L.id, kind: 'crew', open: true, title: L.contract.code + ' · CREW', contact: null, unread: 0, messages: [] };
+            s.comms.threads.unshift(t);
+            post(t.id, null, 'Channel opened. End-to-end encrypted.', { system: true });
+            if (L.role === 'support') post(t.id, PEOPLE[L.owner], 'Glad you’re in. Confirm the split and we move.');
+        }
 
         var emit = function (ev, data) { listeners.forEach(function (fn) { fn(ev, data); }); };
         var push = function () { emit('update', { state: view() }); };
@@ -246,6 +328,8 @@
             s.contracts = s.contracts.filter(function (x) { return x.id !== c.id; });
             if (c.tier === 'X' && L.role === 'lead') { s.offer = null; s.standing.xAuth = false; }
             s.lobby = null;
+            heat(0.34);
+            var t = crewThread(); if (t) post(t.id, null, 'Operation active. Window ' + (c.window ? c.window + ' min' : 'limited') + '.', { system: true });
         }
 
         function intel(k, v, level) {
@@ -286,6 +370,15 @@
             if (outcome === 'complete') { s.stats.completed++; s.stats.delivered++; s.stats.earned = +(s.stats.earned + share).toFixed(4); s.stats.streak++; }
             else { s.stats.failed++; s.stats.streak = 0; }
             s.operation = null;
+            heat(0.22);
+            var ct = crewThread(); if (ct) { post(ct.id, null, (outcome === 'complete' ? 'Contract closed.' : 'Contract terminated.') + ' Channel closed.', { system: true }); ct.open = false; }
+            if (outcome === 'complete') {
+                var today = s.stats.earnings[s.stats.earnings.length - 1];
+                today.v = +(today.v + share).toFixed(2);
+                s.stats.tierHistory.push({ t: Date.now(), v: st.points });
+                s.stats.byClass.forEach(function (b) { if (c.photo && b.k === String(c.photo.shape).toUpperCase()) b.n++; });
+                s.stats.bestShare = Math.max(s.stats.bestShare, share);
+            }
             // live: pdr_criminal pays each member with exports.pdr_tablet:CryptoPay and puts the
             // returned LSX tx id in result.tx. The dev harness sends LSX a demo payout alongside.
             notify(c.code, outcome === 'complete' ? 'Contract closed.' : 'Contract terminated.', { result: r.id });
@@ -302,6 +395,7 @@
                     members: [member(s.player, 'confirmed')], split: evenSplit([s.player.id]), version: 1, total: pay(c),
                     consumesX: c.tier === 'X',
                 };
+                openCrewThread(s.lobby);
             },
             invite: function (d) {
                 var L = s.lobby;
@@ -369,8 +463,22 @@
             },
             leave: function () {
                 if (!s.lobby) return;
+                var t = crewThread(); if (t) { post(t.id, null, 'Crew disbanded. Channel closed.', { system: true }); t.open = false; }
                 s.lobby = null;
             },
+            send: function (d) {
+                var t = thread(d.thread);
+                var text = String(d.text || '').trim().slice(0, 240);
+                if (!t) throw fail('Channel closed');
+                if (t.kind === 'crew' && !t.open) throw fail('Channel closed');
+                if (!text) throw fail('Empty message');
+                post(t.id, { id: s.player.id, handle: s.player.handle, tag: s.player.tag }, text);
+                var from = t.kind === 'crew'
+                    ? (s.operation ? s.operation.crew : (s.lobby ? s.lobby.members : [])).filter(function (m) { return m.id !== s.player.id && m.online !== false && m.state !== 'invited'; })[0]
+                    : t.contact;
+                if (from && Math.random() < 0.85) later(1300 + Math.random() * 900, function () { post(t.id, { id: from.id, handle: from.handle, tag: from.tag }, CHATTER.reply[Math.floor(Math.random() * CHATTER.reply.length)]); push(); });
+            },
+            read: function (d) { var t = thread(d.thread); if (t) t.unread = 0; },
             accept: function (d) {
                 var inv = s.invites.filter(function (i) { return i.id === d.invite; })[0];
                 if (!inv) throw fail('Invitation expired');
@@ -382,6 +490,7 @@
                     id: 'l' + Date.now(), contract: inv.contract, role: 'support', owner: owner.id, max: inv.contract.crew.max,
                     members: members, split: { p2: 40, p3: 30, p1: 30 }, version: 3, total: pay(inv.contract), consumesX: false,
                 };
+                openCrewThread(s.lobby);
             },
             decline: function (d) { s.invites = s.invites.filter(function (i) { return i.id !== d.invite; }); },
             ack: function (d) { if (s.result && s.result.id === d.result) s.result = null; },
@@ -403,6 +512,16 @@
                 s.contracts.length = Math.min(s.contracts.length, 6);
                 notify('NETWORK', 'New contracts available.', { view: 'contracts' });
             },
+            message: function () {
+                var lines = [
+                    ['t-lou', 'Word is a flatbed is working the Rockford lots tonight. Might be nothing.', 'TIP'],
+                    ['t-7q', 'Client wants the next one cleaner. Take your time with it.', null],
+                    ['t-lou', 'If you need a quiet garage in La Mesa, ask for Ramon.', 'TIP'],
+                ];
+                var l = lines[Math.floor(Math.random() * lines.length)];
+                var t = thread(l[0]);
+                post(l[0], t.contact, l[1], l[2] ? { tag: l[2] } : null);
+            },
             offer: function () {
                 s.standing.xAuth = true;
                 s.offer = xOffer();
@@ -423,6 +542,7 @@
                     attempt: 1, attempts: 3, scrambled: X,
                 };
                 log('Target identified.');
+                heat(0.48); chatter('identify');
                 notify(op.contract.code, 'Target identified.', { view: 'operation' });
             },
             attempt: function () {
@@ -441,6 +561,7 @@
                 op.tracker = { status: 'ACTIVE', source: 'VEHICLE', strength: -61, note: 'Locate and disable the transmitting unit.' };
                 if (op.contract.tier === 'A' || op.contract.tier === 'X') op.tracker.note = 'Transmission active. Manual intervention required.';
                 log('Security bypassed. Tracking device detected.');
+                heat(0.72); chatter('bypass');
                 notify(op.contract.code, 'New intelligence available.', { view: 'operation' });
             },
             signal: function () {
@@ -458,6 +579,7 @@
                 op.delivery = { condition: 86, tracking: 'CLEAR', location: 'RECEIVED', distance: 3.8, area: 'LA MESA', world: { x: 820, y: -1150 }, ends: Date.now() + 8.7 * MIN };
                 op.map = { area: 'LA MESA', world: { x: 820, y: -1150, r: 90 }, point: { x: 820, y: -1150 }, updated: Date.now() };
                 log('Tracking clear. Delivery location received.');
+                heat(0.44); chatter('untrack');
                 notify(op.contract.code, 'Delivery location received.', { view: 'operation' });
             },
             drive: function () {
