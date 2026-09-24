@@ -67,12 +67,19 @@ export function formatTime(date, h24) {
     return suffix ? `${hm} ${suffix}` : hm;
 }
 
+const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+/** 'long' → "Thursday 24 September", 'short' → "Thu 24 Sep" (locale-independent, like GNOME Shell). */
 export function formatDate(date, style = 'long') {
-    if (style === 'short') {
-        return date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
-    }
-    return date.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+    const day = DAYS[date.getDay()], month = MONTHS[date.getMonth()];
+    return style === 'short'
+        ? `${day.slice(0, 3)} ${date.getDate()} ${month.slice(0, 3)}`
+        : `${day} ${date.getDate()} ${month}`;
 }
+
+export const monthName = (date) => MONTHS[date.getMonth()];
+export const dayName = (date) => DAYS[date.getDay()];
 
 export function relativeTime(ts) {
     const diff = Math.floor((Date.now() - ts) / 1000);

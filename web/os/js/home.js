@@ -23,7 +23,12 @@ function launchFrom(app, tile) {
 
 function appButton(app, { inDash = false } = {}) {
     const tile = appTile(app);
-    const el = h('button', { class: `app-icon ${inDash ? 'in-dash' : ''}`, 'data-app': app.id, title: app.label },
+    const el = h('button', {
+        class: `app-icon ${inDash ? 'in-dash' : ''}`,
+        'data-app': app.id,
+        'data-label': app.label,
+        'aria-label': app.label,
+    },
         h('span', { class: 'tile-wrap' }, tile, badge(app)),
         inDash ? null : h('span', { class: 'app-label' }, app.label),
         inDash && Apps.isRunning(app.id) ? h('span', { class: 'run-dot' }) : null,
@@ -77,7 +82,8 @@ function renderDash() {
         pinned.length || recents.length ? h('span', { class: 'dash-sep' }) : null,
         h('button', {
             class: 'app-icon in-dash dash-overview',
-            title: 'Show open apps',
+            'data-label': 'Open Apps',
+            'aria-label': 'Open apps',
             onClick: () => Shell.toggleOverlay('overview'),
         }, h('span', { class: 'tile tile-ghost' }, icon('grid'))),
     );
@@ -92,24 +98,32 @@ export const Home = {
             spellcheck: false,
             autocomplete: 'off',
         });
-        search.addEventListener('input', renderGrid);
+        const clear = h('button', {
+            class: 'search-clear',
+            'aria-label': 'Clear search',
+            onClick: () => { search.value = ''; search.dispatchEvent(new Event('input')); search.focus({ preventScroll: true }); },
+        }, icon('close'));
+        search.addEventListener('input', () => {
+            clear.classList.toggle('is-visible', !!search.value);
+            renderGrid();
+        });
         search.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
                 search.value = '';
-                renderGrid();
+                search.dispatchEvent(new Event('input'));
                 search.blur();
             } else if (e.key === 'Enter') {
                 const first = grid.querySelector('.app-icon');
                 if (first) first.click();
                 search.value = '';
-                renderGrid();
+                search.dispatchEvent(new Event('input'));
             }
         });
 
         grid = h('div', { class: 'app-grid' });
         dash = document.getElementById('dash');
         document.getElementById('home').append(
-            h('div', { class: 'search-wrap' }, icon('search', 'search-icon'), search),
+            h('div', { class: 'search-wrap' }, icon('search', 'search-icon'), search, clear),
             h('div', { class: 'grid-scroll' }, grid),
         );
 

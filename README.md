@@ -5,9 +5,14 @@ UI that renders on the tablet's screen, plus the **SDK** other resources use to 
 apps on it.
 
 The OS looks and behaves like a GNOME / libadwaita tablet: a top bar with Activities,
-clock and system menu, a lock screen, an app grid with search, a dash, an activities
-overview, a message tray with calendar, quick settings, notifications, and a Settings
-app. It ships with no gameplay apps.
+clock and Control Center, a lock screen, an app grid with search, a dash, an activities
+overview, a message tray with calendar, notifications, and a Settings app. It ships with
+no gameplay apps.
+
+The **Control Center** (top-right) holds brightness, Do Not Disturb, Dark Style (with an
+accent picker), Night Light (with a strength slider), the lock screen toggle, the list of
+open apps with quit buttons, and Settings / Lock / Put away. Everything in it writes the
+same settings as the Settings app.
 
 It keeps a real system journal. The first boot of a session prints it systemd-style
 (`[  OK  ] Started App Host.`), Settings › System Log shows it live, and warnings/errors

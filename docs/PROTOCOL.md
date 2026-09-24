@@ -96,7 +96,7 @@ each event you care about. `app:request` is the only one whose response is used.
 | `os:log` | `{ level, unit, message, uptime }` | Every `warn`/`error` written to the system journal (bad app descriptors, failed requests, script errors…). Print it to the F8 console so problems are visible in-game. |
 | `os:awake` / `os:asleep` | `{}` | Echo of wake/sleep. |
 | `os:unlocked` | `{}` | The user unlocked. |
-| `os:requestClose` | `{}` | The user pressed the power button in the system menu. Put the tablet away (then send `os:sleep`). |
+| `os:requestClose` | `{}` | The user pressed the power button in the Control Center. Put the tablet away (then send `os:sleep`). |
 | `os:settingsChanged` | `{ settings, changed: string[] }` | Persist it (e.g. `SetResourceKvp`) and send it back via `os:init`/`os:settings` next session. |
 | `app:lifecycle` | `{ id, state, data? }` | `state` is one of `launched`, `ready`, `foreground`, `background`, `closed`. Route it to the owning resource's hooks. |
 | `app:request` | `{ id, action, data }` | From the SDK's `tablet.request()`. **Respond** with `{ ok = true, data = … }` or `{ ok = false, error = '…' }`. Any other value is treated as `data`. |
@@ -134,8 +134,10 @@ registered ─▶ launched ─▶ ready ─▶ foreground ⇄ background ─▶ 
 {
   theme: 'dark' | 'light', accent: '#3584e4',
   wallpaper: 'adwaita' | 'aubergine' | 'arch' | 'mint' | 'plasma' | 'slate' | 'custom', customWallpaper: '',
-  brightness: 10..100, lockEnabled: true, lockPreviews: true, bootStyle: 'verbose' | 'splash' | 'off',
-  dnd: false, clock24h: true, statusDate: true, dock: ['system.settings'], mutedApps: []
+  brightness: 10..100, nightLight: false, nightLightStrength: 10..100, uiScale: 'small' | 'default' | 'large',
+  lockEnabled: true, lockPreviews: true, bootStyle: 'verbose' | 'splash' | 'off',
+  dnd: false, clock24h: true, statusDate: true, weekStart: 'monday' | 'sunday',
+  dock: ['system.settings'], mutedApps: []
 }
 ```
 

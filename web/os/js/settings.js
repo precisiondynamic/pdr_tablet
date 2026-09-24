@@ -3,10 +3,12 @@
 import { Apps } from './apps.js';
 import { Bridge } from './bridge.js';
 import { log } from './log.js';
-import { state, settings, settingsSource, on, updateSettings, resetSettings, ACCENTS } from './store.js';
+import { Dialog } from './dialog.js';
+import { Shell } from './shell.js';
+import { state, settings, settingsSource, on, updateSettings, resetSettings, ACCENTS, SLIDER_KEYS } from './store.js';
 import { appTile, icon, logoMark } from './icons.js';
 import { WALLPAPERS, wallpaperCss, isSafeUrl } from './wallpapers.js';
-import { h, fill, slider } from './util.js';
+import { h, fill, slider, formatDate, formatTime } from './util.js';
 
 /* ---------- widgets ---------- */
 
@@ -73,16 +75,44 @@ function appearancePage() {
         value: settings.customWallpaper,
         spellcheck: false,
     });
-    const error = h('div', { class: 'row-error' });
+    const status = h('div', { class: 'row-status' });
+    const applyBtn = h('button', { class: 'btn btn-suggested' }, 'Apply');
+
+    // load the image first so a dead link never leaves the tablet with a black background
     const apply = () => {
         const url = input.value.trim();
+        status.className = 'row-status';
         if (!isSafeUrl(url)) {
-            error.textContent = 'Enter a valid http(s):// or nui:// image URL.';
+            status.classList.add('is-error');
+            status.textContent = 'Enter an http(s):// or nui:// image URL.';
             return;
         }
-        updateSettings({ customWallpaper: url, wallpaper: 'custom' });
+        status.textContent = 'Loading…';
+        applyBtn.disabled = true;
+        const img = new Image();
+        const done = (ok) => {
+            applyBtn.disabled = false;
+            if (!ok) {
+                status.classList.add('is-error');
+                status.textContent = 'That image could not be loaded.';
+                log.warn('settings', `Custom background failed to load: ${url}`);
+                return;
+            }
+            status.textContent = '';
+            input.blur();   // lets the page re-render with the new selection
+            updateSettings({ customWallpaper: url, wallpaper: 'custom' });
+        };
+        img.onload = () => done(true);
+        img.onerror = () => done(false);
+        img.src = url;
     };
+    applyBtn.addEventListener('click', apply);
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') apply(); });
+
+    const tiles = WALLPAPERS.map((w) => ({ id: w.id, name: w.name, css: w.css }));
+    if (isSafeUrl(settings.customWallpaper)) {
+        tiles.push({ id: 'custom', name: 'Custom', css: wallpaperCss({ wallpaper: 'custom', customWallpaper: settings.customWallpaper }) });
+    }
 
     return [
         h('div', { class: 'style-choices' }, stylePreview('light'), stylePreview('dark')),
@@ -94,26 +124,55 @@ function appearancePage() {
                 onClick: () => updateSettings({ accent: a.color }),
             }, icon('check'))))),
         group('Background', null,
-            h('div', { class: 'wp-grid' }, WALLPAPERS.map((w) => h('button', {
+            h('div', { class: 'wp-grid' }, tiles.map((w) => h('button', {
                 class: `wp-item ${settings.wallpaper === w.id ? 'is-active' : ''}`,
                 title: w.name,
                 onClick: () => updateSettings({ wallpaper: w.id }),
             }, h('span', { class: 'wp-preview', style: { background: w.css } }), h('span', { class: 'wp-name' }, w.name))))),
-        group('Custom Background', 'Any http(s):// or nui:// image. It is loaded on the tablet itself.',
+        group('Custom Background', 'Any http(s):// or nui:// image. It is checked before it is applied.',
             h('div', { class: 'row row-stack' },
-                h('div', { class: 'entry-row' }, input, h('button', { class: 'btn btn-suggested', onClick: apply }, 'Apply')),
-                error)),
+                h('div', { class: 'entry-row' }, input, applyBtn),
+                status),
+            settings.customWallpaper
+                ? row('Remove Custom Background', h('button', {
+                    class: 'btn',
+                    onClick: () => updateSettings({
+                        customWallpaper: '',
+                        wallpaper: settings.wallpaper === 'custom' ? 'adwaita' : settings.wallpaper,
+                    }),
+                }, 'Remove'))
+                : null),
     ];
+}
+
+function percentSlider(key, label) {
+    const out = h('span', { class: 'range-value' }, `${settings[key]}%`);
+    return h('div', { class: 'range-wrap' },
+        slider({
+            min: 10, max: 100, value: settings[key],
+            'aria-label': label,
+            onInput: (e) => {
+                out.textContent = `${e.target.value}%`;
+                updateSettings({ [key]: Number(e.target.value) });
+            },
+        }),
+        out);
 }
 
 function displayPage() {
     return [
         group('Brightness', null,
-            row('Screen Brightness', h('div', { class: 'range-wrap' },
-                slider({
-                    min: 10, max: 100, value: settings.brightness,
-                    onInput: (e) => updateSettings({ brightness: Number(e.target.value) }),
-                }))),
+            row('Screen Brightness', percentSlider('brightness', 'Screen brightness')),
+        ),
+        group('Night Light', 'Tints the screen warmer to reduce glare at night.',
+            row('Night Light', settingSwitch('nightLight')),
+            row('Strength', percentSlider('nightLightStrength', 'Night light strength')),
+        ),
+        group('Interface', null,
+            row('Interface Size',
+                segmented([['small', 'Small'], ['default', 'Default'], ['large', 'Large']], settings.uiScale,
+                    (v) => updateSettings({ uiScale: v })),
+                'Scales the shell and built-in apps. App pages keep their own sizing.'),
         ),
     ];
 }
@@ -123,7 +182,6 @@ function notificationsPage() {
     return [
         group(null, null,
             row('Do Not Disturb', settingSwitch('dnd'), 'Notifications are collected without banners.'),
-            row('Lock Screen Notifications', settingSwitch('lockPreviews'), 'Show notification content on the lock screen.'),
         ),
         group('App Notifications', null,
             apps.length
@@ -141,16 +199,28 @@ function lockPage() {
     return [
         group(null, null,
             row('Lock Screen', settingSwitch('lockEnabled'), 'Show the lock screen whenever the tablet is taken out.'),
+            row('Notification Previews', settingSwitch('lockPreviews'), 'Show notification content on the lock screen. When off, only a count is shown.'),
+        ),
+        group(null, null,
+            row('Lock Now', h('button', { class: 'btn', onClick: () => Shell.lock() }, icon('lock'), 'Lock'),
+                'Locks immediately, even when the lock screen is off.'),
         ),
     ];
 }
 
 function dateTimePage() {
+    const now = new Date();
     return [
+        h('div', { class: 'time-preview' },
+            h('div', { class: 'time-preview-clock' }, formatTime(now, settings.clock24h)),
+            h('div', { class: 'time-preview-date' }, formatDate(now))),
         group(null, null,
             row('Time Format', segmented([[true, '24-hour'], [false, 'AM / PM']], settings.clock24h, (v) => updateSettings({ clock24h: v }))),
             row('Date in Top Bar', settingSwitch('statusDate')),
+            row('First Day of Week', segmented([['monday', 'Monday'], ['sunday', 'Sunday']], settings.weekStart,
+                (v) => updateSettings({ weekStart: v })), 'Used by the calendar in the message tray.'),
         ),
+        h('p', { class: 'pref-footnote' }, 'The time comes from the player\'s computer clock.'),
     ];
 }
 
@@ -253,8 +323,18 @@ function systemPage() {
             row('Open Apps', value(String(Apps.running().length))),
         ),
         group(null, null,
-            row('Reset Settings', h('button', { class: 'btn btn-destructive', onClick: () => resetSettings() }, 'Reset'),
-                'Restore every setting on this tablet to its default.'),
+            row('Reset Settings', h('button', {
+                class: 'btn btn-destructive',
+                onClick: async () => {
+                    const ok = await Dialog.confirm({
+                        title: 'Reset All Settings?',
+                        body: 'Appearance, notifications, lock screen and dash pins go back to their defaults. Installed apps are not affected.',
+                        confirm: 'Reset',
+                        destructive: true,
+                    });
+                    if (ok) resetSettings();
+                },
+            }, 'Reset…'), 'Restore every setting on this tablet to its default.'),
         ),
     ];
 }
@@ -313,8 +393,12 @@ export const SettingsApp = {
         };
         draw(false);
 
+        const onMinute = () => { if (current === 'datetime') redraw(); };
+        document.addEventListener('pdr:minute', onMinute);
+
         const offs = [
-            on('settings', (changed) => { if (!(changed.length === 1 && changed[0] === 'brightness')) redraw(); }),
+            () => document.removeEventListener('pdr:minute', onMinute),
+            on('settings', (changed) => { if (!changed.every((k) => SLIDER_KEYS.includes(k))) redraw(); }),
             on('apps', redraw),
             on('running', redraw),
         ];

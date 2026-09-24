@@ -2,7 +2,7 @@ import { Bridge } from './bridge.js';
 import { log } from './log.js';
 import { Emitter, clamp } from './util.js';
 
-export const VERSION = '1.1.0';
+export const VERSION = '1.2.0';
 const STORAGE_KEY = 'pdr_tablet:settings';
 
 // GNOME accent colours
@@ -19,6 +19,7 @@ export const ACCENTS = [
 ];
 
 const BOOT_STYLES = ['verbose', 'splash', 'off'];
+export const UI_SCALES = { small: 0.9, default: 1, large: 1.1 };
 
 export const DEFAULT_SETTINGS = Object.freeze({
     theme: 'dark',            // 'dark' | 'light'
@@ -26,12 +27,16 @@ export const DEFAULT_SETTINGS = Object.freeze({
     wallpaper: 'adwaita',     // preset id, or 'custom'
     customWallpaper: '',
     brightness: 100,          // 10–100
+    nightLight: false,        // warm colour filter
+    nightLightStrength: 50,   // 10–100
+    uiScale: 'default',       // 'small' | 'default' | 'large'
     lockEnabled: true,
     lockPreviews: true,       // notification previews on the lock screen
     bootStyle: 'verbose',     // 'verbose' (boot log) | 'splash' | 'off'
     dnd: false,
     clock24h: true,
     statusDate: true,         // show the date in the top bar
+    weekStart: 'monday',      // 'monday' | 'sunday'
     dock: ['system.settings'],
     mutedApps: [],
 });
@@ -50,7 +55,10 @@ function sanitize(input) {
     if (!['dark', 'light'].includes(out.theme)) out.theme = DEFAULT_SETTINGS.theme;
     if (!/^#[0-9a-f]{6}$/i.test(out.accent)) out.accent = DEFAULT_SETTINGS.accent;
     if (!BOOT_STYLES.includes(out.bootStyle)) out.bootStyle = DEFAULT_SETTINGS.bootStyle;
+    if (!Object.prototype.hasOwnProperty.call(UI_SCALES, out.uiScale)) out.uiScale = DEFAULT_SETTINGS.uiScale;
+    if (!['monday', 'sunday'].includes(out.weekStart)) out.weekStart = DEFAULT_SETTINGS.weekStart;
     out.brightness = clamp(Math.round(out.brightness) || 100, 10, 100);
+    out.nightLightStrength = clamp(Math.round(out.nightLightStrength) || 50, 10, 100);
     return out;
 }
 
@@ -62,6 +70,9 @@ function loadLocal() {
         return { data: {}, source: 'defaults (storage unavailable)' };
     }
 }
+
+/** Settings driven by sliders: UIs skip full re-renders for these so a drag isn't interrupted. */
+export const SLIDER_KEYS = ['brightness', 'nightLightStrength'];
 
 const bus = new Emitter();
 const initial = loadLocal();
@@ -75,7 +86,7 @@ export const state = {
     booting: false,
     locked: true,
     view: 'home',             // 'home' | 'app'
-    overlay: null,            // 'overview' | 'calendar' | 'quick' | null
+    overlay: null,            // 'overview' | 'calendar' | 'control' | null
     osName: 'PDR OS',
     version: VERSION,
     deviceName: null,
@@ -102,8 +113,8 @@ export function updateSettings(patch, { fromHost = false } = {}) {
     Object.assign(settings, next);
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(settings)); } catch { /* storage unavailable */ }
     if (!fromHost) Bridge.emit('os:settingsChanged', { settings: { ...settings }, changed });
-    // brightness fires on every slider tick; keep it out of the journal
-    if (!(changed.length === 1 && changed[0] === 'brightness')) {
+    // sliders fire on every tick; keep them out of the journal
+    if (!(changed.length === 1 && SLIDER_KEYS.includes(changed[0]))) {
         log.debug('settings', `${fromHost ? 'Applied from host' : 'Changed'}: ${changed.join(', ')}`);
     }
     bus.emit('settings', changed);

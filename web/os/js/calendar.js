@@ -5,9 +5,9 @@ import { Notifications, notificationCard } from './notifications.js';
 import { Shell } from './shell.js';
 import { state, settings, on, updateSettings } from './store.js';
 import { icon } from './icons.js';
-import { h, fill } from './util.js';
+import { h, fill, dayName, monthName } from './util.js';
 
-const WEEKDAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];   // ISO weeks start on Monday
+const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];   // indexed by Date#getDay()
 let el = null;
 let viewMonth = null;   // Date set to the 1st of the month being shown
 
@@ -18,10 +18,12 @@ function sameDay(a, b) {
 function monthGrid() {
     const today = new Date();
     const first = new Date(viewMonth);
-    const offset = (first.getDay() + 6) % 7;   // Monday = 0
+    const startDay = settings.weekStart === 'sunday' ? 0 : 1;
+    const offset = (first.getDay() - startDay + 7) % 7;
     const start = new Date(first.getFullYear(), first.getMonth(), 1 - offset);
 
-    const cells = WEEKDAYS.map((d) => h('span', { class: 'cal-wd' }, d));
+    const cells = [];
+    for (let i = 0; i < 7; i++) cells.push(h('span', { class: 'cal-wd' }, WEEKDAYS[(startDay + i) % 7]));
     for (let i = 0; i < 42; i++) {
         const day = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
         const cls = ['cal-day'];
@@ -63,16 +65,19 @@ function render() {
         ),
         h('section', { class: 'tray-cal' },
             h('div', { class: 'cal-today' },
-                h('div', { class: 'cal-weekday' }, now.toLocaleDateString('en-GB', { weekday: 'long' })),
-                h('div', { class: 'cal-date' }, now.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })),
+                h('div', { class: 'cal-weekday' }, dayName(now)),
+                h('div', { class: 'cal-date' }, `${now.getDate()} ${monthName(now)} ${now.getFullYear()}`),
             ),
             h('div', { class: 'cal-card' },
                 h('div', { class: 'cal-nav' },
                     h('button', { class: 'hb-btn', title: 'Previous month', onClick: () => shiftMonth(-1) }, icon('chevronLeft')),
-                    h('span', { class: 'cal-month' }, viewMonth.toLocaleDateString('en-GB', {
-                        month: 'long',
-                        year: viewMonth.getFullYear() === now.getFullYear() ? undefined : 'numeric',
-                    })),
+                    h('button', {
+                        class: 'cal-month',
+                        title: 'Back to today',
+                        onClick: () => { viewMonth = new Date(now.getFullYear(), now.getMonth(), 1); render(); },
+                    }, viewMonth.getFullYear() === now.getFullYear()
+                        ? monthName(viewMonth)
+                        : `${monthName(viewMonth)} ${viewMonth.getFullYear()}`),
                     h('button', { class: 'hb-btn', title: 'Next month', onClick: () => shiftMonth(1) }, icon('chevronRight')),
                 ),
                 monthGrid(),
@@ -94,7 +99,8 @@ export const Calendar = {
         });
         const rerender = () => { if (state.overlay === 'calendar') render(); };
         on('notifications', rerender);
-        on('settings', (changed) => { if (changed.includes('dnd')) rerender(); });
+        on('settings', (changed) => { if (changed.some((k) => k === 'dnd' || k === 'weekStart')) rerender(); });
+        document.addEventListener('pdr:minute', rerender);   // relative times + date rollover
         log.ok('shell', 'Started Message Tray.');
     },
 };

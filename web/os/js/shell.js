@@ -1,13 +1,14 @@
 // System chrome: top bar, lock screen, power states, wallpaper/theme/brightness, home bar and
-// the overlay manager (overview, message tray, quick settings).
+// the overlay manager (overview, message tray, control center).
 
 import { Apps } from './apps.js';
 import { Boot } from './boot.js';
 import { Bridge } from './bridge.js';
+import { Dialog } from './dialog.js';
 import { log } from './log.js';
 import { Menu } from './menu.js';
 import { Notifications, notificationCard } from './notifications.js';
-import { state, settings, on, setState } from './store.js';
+import { state, settings, on, setState, UI_SCALES } from './store.js';
 import { icon } from './icons.js';
 import { wallpaperCss } from './wallpapers.js';
 import { h, fill, drag, formatDate, formatTime, timeParts, hexToRgb, clamp } from './util.js';
@@ -33,6 +34,13 @@ function applyAppearance(changed) {
     if (!changed || changed.includes('brightness')) {
         // 100 → no dimming, 10 → 80 % black overlay
         $('dim').style.opacity = String(((100 - settings.brightness) / 90) * 0.8);
+    }
+    if (!changed || changed.some((k) => k === 'nightLight' || k === 'nightLightStrength')) {
+        // warm multiply filter; strength 100 ≈ a strong evening tint
+        $('nightlight').style.opacity = settings.nightLight ? String((settings.nightLightStrength / 100) * 0.5) : '0';
+    }
+    if (!changed || changed.includes('uiScale')) {
+        root.style.setProperty('--ui-scale', String(UI_SCALES[settings.uiScale]));
     }
 }
 
@@ -60,7 +68,7 @@ function buildTopBar() {
                 h('span', { class: 'tb-unread', id: 'tb-unread' })),
         ),
         h('div', { class: 'tb-end' },
-            h('button', { class: 'tb-btn tb-tray', id: 'tb-quick', title: 'System menu', onClick: () => Shell.toggleOverlay('quick') }),
+            h('button', { class: 'tb-btn tb-tray', id: 'tb-control', title: 'Control Center', onClick: () => Shell.toggleOverlay('control') }),
         ),
     );
     renderTray();
@@ -96,8 +104,9 @@ export function batteryIndicator() {
 
 function renderTray() {
     const { signal, network } = state.status;
-    fill($('tb-quick'),
+    fill($('tb-control'),
         settings.dnd ? icon('bellOff', 'tb-icon') : null,
+        settings.nightLight ? icon('nightLight', 'tb-icon') : null,
         network ? h('span', { class: 'tb-network' }, network) : null,
         Number.isFinite(signal) ? signalBars(clamp(Math.round(signal), 0, 4)) : null,
         batteryIndicator(),
@@ -110,14 +119,13 @@ function tickClock(force) {
     if (!force && now.getMinutes() === lastMinute) return;
     lastMinute = now.getMinutes();
 
-    const date = settings.statusDate
-        ? now.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }).replace(',', '')
-        : '';
+    const date = settings.statusDate ? formatDate(now, 'short') : '';
     $('tb-clock-text').textContent = date ? `${date}  ${formatTime(now, settings.clock24h)}` : formatTime(now, settings.clock24h);
 
     const { hm, suffix } = timeParts(now, settings.clock24h);
     fill(lockEl.querySelector('.lock-time'), hm, suffix ? h('small', null, suffix) : null);
     lockEl.querySelector('.lock-date').textContent = formatDate(now);
+    renderLockNotifications();   // keeps the relative times fresh
     document.dispatchEvent(new CustomEvent('pdr:minute', { detail: now }));
 }
 
@@ -203,6 +211,8 @@ export const Shell = {
         Boot.init();
 
         $('overlay-scrim').addEventListener('pointerdown', () => Shell.closeOverlays());
+        // the screen never scrolls; focus() or scrollIntoView() inside a layer must not shift it
+        device.addEventListener('scroll', () => { device.scrollTop = 0; device.scrollLeft = 0; });
 
         applyAppearance();
         applyState();
@@ -216,6 +226,7 @@ export const Shell = {
             applyAppearance(changed);
             if (changed.some((k) => ['clock24h', 'statusDate'].includes(k))) tickClock(true);
             if (changed.includes('dnd')) { renderTray(); renderUnread(); }
+            if (changed.includes('nightLight')) renderTray();
             if (changed.includes('lockPreviews')) renderLockNotifications();
             if (changed.includes('lockEnabled') && !settings.lockEnabled && state.locked && state.awake) Shell.unlock();
         });
@@ -227,7 +238,7 @@ export const Shell = {
         });
 
         document.addEventListener('keydown', (e) => {
-            if (e.key !== 'Escape') return;
+            if (e.key !== 'Escape' || Dialog.isOpen()) return;
             if (Menu.isOpen()) Menu.close();
             else if (state.overlay) Shell.closeOverlays();
         });
@@ -299,6 +310,7 @@ export const Shell = {
     sleep() {
         if (!state.awake) return;
         Shell.closeOverlays();
+        Dialog.dismiss();
         Apps.suspend();
         Boot.cancel();
         setState({ awake: false, booting: false, locked: settings.lockEnabled || state.locked });
@@ -308,6 +320,7 @@ export const Shell = {
 
     lock() {
         Shell.closeOverlays();
+        Dialog.dismiss();
         Apps.suspend();
         setState({ locked: true });
         log.info('session', 'Locked');
