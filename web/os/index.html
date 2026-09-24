@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>PDR OS</title>
+    <link rel="preload" href="fonts/cantarell-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="stylesheet" href="css/os.css">
     <!-- shared key-injection helpers (window.PDRTablet); the OS never calls ready() -->
     <script>window.__PDR_TABLET_OS__ = true;</script>
@@ -14,18 +15,19 @@
     <div id="device" class="device is-asleep is-locked">
         <div id="wallpaper" class="wallpaper"></div>
 
-        <div id="home" class="home"></div>
-        <nav id="dock" class="dock"></nav>
+        <main id="home" class="home"></main>
         <div id="apps" class="apps"></div>
-        <div id="switcher" class="switcher"></div>
+        <div id="overview" class="overview"></div>
+        <nav id="dash" class="dash"></nav>
         <div id="lock" class="lock"></div>
 
-        <header id="statusbar" class="statusbar"></header>
+        <header id="topbar" class="topbar"></header>
         <div id="homebar" class="homebar" title="Home"></div>
 
-        <div id="panel-scrim" class="scrim"></div>
-        <div id="panel" class="panel"></div>
-        <div id="toasts" class="toasts"></div>
+        <div id="overlay-scrim" class="scrim"></div>
+        <div id="calendar" class="popover popover-center tray"></div>
+        <div id="quick" class="popover popover-end qs"></div>
+        <div id="banners" class="banners"></div>
         <div id="menu-scrim" class="scrim menu-scrim"></div>
         <div id="menu" class="menu"></div>
 

@@ -1,30 +1,36 @@
-// Home screen: clock + notifications widgets, app grid, dock.
+// Home: search + app grid, and the dash (dock) at the bottom.
 
 import { Apps } from './apps.js';
+import { log } from './log.js';
 import { Menu } from './menu.js';
-import { Notifications, notificationCard } from './notifications.js';
+import { Shell } from './shell.js';
 import { settings, on } from './store.js';
 import { appTile, icon } from './icons.js';
-import { h, fill, longPress, formatDate, timeParts } from './util.js';
+import { h, fill, longPress } from './util.js';
 
-const MAX_DOCK_RECENTS = 3;
-let grid, dock, clockEl, notifBox;
+const MAX_DASH_RECENTS = 3;
+let grid, dash, search;
 
 function badge(app) {
     if (!app.badge) return null;
     return h('span', { class: 'badge' }, app.badge > 99 ? '99+' : String(app.badge));
 }
 
-function appButton(app, { inDock = false } = {}) {
+function launchFrom(app, tile) {
+    const r = tile.getBoundingClientRect();
+    Apps.launch(app.id, undefined, { x: r.left + r.width / 2, y: r.top + r.height / 2 });
+}
+
+function appButton(app, { inDash = false } = {}) {
     const tile = appTile(app);
-    const el = h('button', { class: `app-icon ${inDock ? 'in-dock' : ''}`, 'data-app': app.id, title: app.label },
+    const el = h('button', { class: `app-icon ${inDash ? 'in-dash' : ''}`, 'data-app': app.id, title: app.label },
         h('span', { class: 'tile-wrap' }, tile, badge(app)),
-        inDock ? null : h('span', { class: 'app-label' }, app.label),
-        inDock && Apps.isRunning(app.id) ? h('span', { class: 'run-dot' }) : null,
+        inDash ? null : h('span', { class: 'app-label' }, app.label),
+        inDash && Apps.isRunning(app.id) ? h('span', { class: 'run-dot' }) : null,
     );
     el.addEventListener('click', () => {
-        const r = tile.getBoundingClientRect();
-        Apps.launch(app.id, undefined, { x: r.left + r.width / 2, y: r.top + r.height / 2 });
+        Shell.closeOverlays();
+        launchFrom(app, tile);
     });
     el.addEventListener('contextmenu', (e) => {
         e.preventDefault();
@@ -34,79 +40,85 @@ function appButton(app, { inDock = false } = {}) {
     return el;
 }
 
-function renderGrid() {
-    const apps = Apps.list();
-    const thirdParty = apps.filter((a) => !a.system);
-    fill(grid,
-        ...apps.map((app) => appButton(app)),
-        thirdParty.length
-            ? null
-            : h('div', { class: 'grid-empty' },
-                icon('apps', 'grid-empty-icon'),
-                h('div', { class: 'grid-empty-title' }, 'No apps installed'),
-                h('div', { class: 'grid-empty-text' }, 'Apps from compatible resources appear here automatically when they start.'),
-            ),
-    );
+function matches(app, query) {
+    return !query || app.label.toLowerCase().includes(query) || app.id.toLowerCase().includes(query);
 }
 
-function renderDock() {
+function renderGrid() {
+    const query = search.value.trim().toLowerCase();
+    const apps = Apps.list().filter((a) => matches(a, query));
+    const installed = Apps.list().some((a) => !a.system);
+
+    let empty = null;
+    if (query && !apps.length) {
+        empty = h('div', { class: 'status-page' },
+            icon('search', 'status-icon'),
+            h('div', { class: 'status-title' }, 'No Results'),
+            h('div', { class: 'status-desc' }, 'Try a different search.'));
+    } else if (!query && !installed) {
+        empty = h('div', { class: 'status-page' },
+            icon('grid', 'status-icon'),
+            h('div', { class: 'status-title' }, 'No Apps Installed'),
+            h('div', { class: 'status-desc' }, 'Apps from compatible resources appear here automatically when they start.'));
+    }
+    fill(grid, apps.map((app) => appButton(app)), empty);
+}
+
+function renderDash() {
     const pinned = settings.dock.map((id) => Apps.get(id)).filter((a) => a && !a.hidden);
     const recents = Apps.running()
         .filter((a) => !a.hidden && !settings.dock.includes(a.id))
-        .slice(0, MAX_DOCK_RECENTS);
+        .slice(0, MAX_DASH_RECENTS);
 
-    fill(dock,
-        ...pinned.map((app) => appButton(app, { inDock: true })),
-        pinned.length && recents.length ? h('span', { class: 'dock-divider' }) : null,
-        ...recents.map((app) => appButton(app, { inDock: true })),
-    );
-    dock.classList.toggle('is-empty', !pinned.length && !recents.length);
-}
-
-function renderClock(now = new Date()) {
-    const { hm, suffix } = timeParts(now, settings.clock24h);
-    fill(clockEl,
-        h('div', { class: 'cw-time' }, hm, suffix ? h('small', null, suffix) : null),
-        h('div', { class: 'cw-date' }, formatDate(now)),
-    );
-}
-
-function renderNotifications() {
-    const list = Notifications.all().slice(0, 4);
-    fill(notifBox,
-        h('div', { class: 'widget-title' }, icon('bell'), 'Notifications'),
-        list.length
-            ? h('div', { class: 'nw-list' }, list.map((n) => notificationCard(n, { compact: true, dismissible: true })))
-            : h('div', { class: 'nw-empty' }, "You're all caught up"),
+    fill(dash,
+        pinned.map((app) => appButton(app, { inDash: true })),
+        recents.length ? h('span', { class: 'dash-sep' }) : null,
+        recents.map((app) => appButton(app, { inDash: true })),
+        pinned.length || recents.length ? h('span', { class: 'dash-sep' }) : null,
+        h('button', {
+            class: 'app-icon in-dash dash-overview',
+            title: 'Show open apps',
+            onClick: () => Shell.toggleOverlay('overview'),
+        }, h('span', { class: 'tile tile-ghost' }, icon('grid'))),
     );
 }
 
 export const Home = {
     init() {
-        const home = document.getElementById('home');
-        clockEl = h('div', { class: 'widget clock-widget' });
-        notifBox = h('div', { class: 'widget notif-widget' });
-        grid = h('div', { class: 'app-grid' });
-        dock = document.getElementById('dock');
+        search = h('input', {
+            type: 'text',
+            class: 'search-entry',
+            placeholder: 'Type to search',
+            spellcheck: false,
+            autocomplete: 'off',
+        });
+        search.addEventListener('input', renderGrid);
+        search.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                search.value = '';
+                renderGrid();
+                search.blur();
+            } else if (e.key === 'Enter') {
+                const first = grid.querySelector('.app-icon');
+                if (first) first.click();
+                search.value = '';
+                renderGrid();
+            }
+        });
 
-        home.append(
-            h('aside', { class: 'home-widgets' }, clockEl, notifBox),
-            h('main', { class: 'home-apps' }, grid),
+        grid = h('div', { class: 'app-grid' });
+        dash = document.getElementById('dash');
+        document.getElementById('home').append(
+            h('div', { class: 'search-wrap' }, icon('search', 'search-icon'), search),
+            h('div', { class: 'grid-scroll' }, grid),
         );
 
-        renderClock();
         renderGrid();
-        renderDock();
-        renderNotifications();
+        renderDash();
 
-        document.addEventListener('pdr:minute', (e) => renderClock(e.detail));
-        on('apps', () => { renderGrid(); renderDock(); });
-        on('running', renderDock);
-        on('notifications', renderNotifications);
-        on('settings', (changed) => {
-            if (changed.includes('dock')) renderDock();
-            if (changed.includes('clock24h')) renderClock();
-            if (changed.includes('mutedApps')) renderGrid();
-        });
+        on('apps', () => { renderGrid(); renderDash(); });
+        on('running', renderDash);
+        on('settings', (changed) => { if (changed.includes('dock')) renderDash(); });
+        log.ok('home', 'Started App Launcher.');
     },
 };

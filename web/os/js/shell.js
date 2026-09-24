@@ -1,21 +1,22 @@
-// System chrome: status bar, boot, lock screen, sleep, wallpaper/theme/brightness, home bar.
+// System chrome: top bar, lock screen, power states, wallpaper/theme/brightness, home bar and
+// the overlay manager (overview, message tray, quick settings).
 
 import { Apps } from './apps.js';
+import { Boot } from './boot.js';
 import { Bridge } from './bridge.js';
-import { Notifications, notificationCard } from './notifications.js';
-import { Panel } from './panel.js';
-import { Switcher } from './switcher.js';
+import { log } from './log.js';
 import { Menu } from './menu.js';
+import { Notifications, notificationCard } from './notifications.js';
 import { state, settings, on, setState } from './store.js';
-import { icon, logoMark } from './icons.js';
+import { icon } from './icons.js';
 import { wallpaperCss } from './wallpapers.js';
 import { h, fill, drag, formatDate, formatTime, timeParts, hexToRgb, clamp } from './util.js';
 
-const BOOT_MS = 1900;
 const $ = (id) => document.getElementById(id);
 
-let device, lockEl, bootEl;
+let device, lockEl, lockInner;
 let lastMinute = -1;
+const overlays = new Map();   // name → { onOpen?, onClose? }
 
 /* ---------- appearance ---------- */
 
@@ -38,49 +39,70 @@ function applyAppearance(changed) {
 function applyState() {
     device.classList.toggle('is-asleep', !state.awake);
     device.classList.toggle('is-locked', state.locked);
+    device.classList.toggle('is-booting', state.booting);
     device.classList.toggle('in-app', state.view === 'app');
-    device.classList.toggle('has-overlay', !!state.overlay);
     if (state.overlay) device.dataset.overlay = state.overlay;
     else delete device.dataset.overlay;
+    for (const [name] of overlays) $(`tb-${name}`)?.classList.toggle('is-active', state.overlay === name);
 }
 
-/* ---------- status bar ---------- */
+/* ---------- top bar ---------- */
 
-function buildStatusBar() {
-    const bar = $('statusbar');
-    bar.append(
-        h('div', { class: 'sb-left' },
-            h('span', { class: 'sb-time', id: 'sb-time' }),
-            h('span', { class: 'sb-date', id: 'sb-date' }),
+function buildTopBar() {
+    $('topbar').append(
+        h('div', { class: 'tb-start' },
+            h('button', { class: 'tb-btn tb-activities', id: 'tb-overview', title: 'Activities', onClick: () => Shell.toggleOverlay('overview') },
+                h('span', { class: 'ws', id: 'tb-ws' })),
         ),
-        h('button', { class: 'sb-right', id: 'sb-right', title: 'Quick settings', onClick: () => Panel.toggle() }),
+        h('div', { class: 'tb-center' },
+            h('button', { class: 'tb-btn tb-clock', id: 'tb-calendar', title: 'Calendar and notifications', onClick: () => Shell.toggleOverlay('calendar') },
+                h('span', { id: 'tb-clock-text' }),
+                h('span', { class: 'tb-unread', id: 'tb-unread' })),
+        ),
+        h('div', { class: 'tb-end' },
+            h('button', { class: 'tb-btn tb-tray', id: 'tb-quick', title: 'System menu', onClick: () => Shell.toggleOverlay('quick') }),
+        ),
     );
-    renderStatusRight();
+    renderTray();
+    renderWorkspaces();
+    renderUnread();
+}
+
+/** Activities indicator: one pill for the current view plus a dot per background app. */
+function renderWorkspaces() {
+    const others = Math.min(Apps.running().filter((a) => a.id !== Apps.foreground).length, 5);
+    fill($('tb-ws'), h('i', { class: 'ws-active' }), Array.from({ length: others }, () => h('i')));
+}
+
+function renderUnread() {
+    $('tb-unread').classList.toggle('is-visible', Notifications.unread > 0 && !settings.dnd);
 }
 
 function signalBars(level) {
-    const bars = h('span', { class: 'sb-signal', title: `Signal ${level}/4` });
+    const bars = h('span', { class: 'tb-signal', title: `Signal ${level}/4` });
     for (let i = 1; i <= 4; i++) bars.append(h('i', { class: i <= level ? 'on' : '' }));
     return bars;
 }
 
-function renderStatusRight() {
-    const { battery, charging, signal, network } = state.status;
-    const items = [
-        settings.dnd ? icon('moon', 'sb-icon') : null,
-        network ? h('span', { class: 'sb-network' }, network) : null,
+export function batteryIndicator() {
+    const { battery, charging } = state.status;
+    if (!Number.isFinite(battery)) return null;
+    return h('span', { class: 'tb-battery' },
+        h('span', { class: `battery ${battery <= 20 && !charging ? 'is-low' : ''}` },
+            h('span', { class: 'battery-fill', style: { width: `${clamp(battery, 0, 100)}%` } }),
+            charging ? icon('bolt', 'battery-bolt') : null),
+        h('span', null, `${Math.round(battery)}%`));
+}
+
+function renderTray() {
+    const { signal, network } = state.status;
+    fill($('tb-quick'),
+        settings.dnd ? icon('bellOff', 'tb-icon') : null,
+        network ? h('span', { class: 'tb-network' }, network) : null,
         Number.isFinite(signal) ? signalBars(clamp(Math.round(signal), 0, 4)) : null,
-        Number.isFinite(battery)
-            ? h('span', { class: 'sb-battery' },
-                h('span', { class: 'sb-battery-pct' }, `${Math.round(battery)}%`),
-                h('span', { class: `battery ${battery <= 20 && !charging ? 'is-low' : ''}` },
-                    h('span', { class: 'battery-fill', style: { width: `${clamp(battery, 0, 100)}%` } })),
-                charging ? icon('bolt', 'sb-icon sb-bolt') : null)
-            : null,
-    ].filter(Boolean);
-    // the integration decides what status exists; keep a visible handle for the quick panel either way
-    if (!items.length) items.push(icon('sunSmall', 'sb-icon'));
-    fill($('sb-right'), ...items);
+        batteryIndicator(),
+        icon('power', 'tb-icon'),
+    );
 }
 
 function tickClock(force) {
@@ -88,8 +110,10 @@ function tickClock(force) {
     if (!force && now.getMinutes() === lastMinute) return;
     lastMinute = now.getMinutes();
 
-    $('sb-time').textContent = formatTime(now, settings.clock24h);
-    $('sb-date').textContent = settings.statusDate ? formatDate(now, 'short') : '';
+    const date = settings.statusDate
+        ? now.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }).replace(',', '')
+        : '';
+    $('tb-clock-text').textContent = date ? `${date}  ${formatTime(now, settings.clock24h)}` : formatTime(now, settings.clock24h);
 
     const { hm, suffix } = timeParts(now, settings.clock24h);
     fill(lockEl.querySelector('.lock-time'), hm, suffix ? h('small', null, suffix) : null);
@@ -97,108 +121,71 @@ function tickClock(force) {
     document.dispatchEvent(new CustomEvent('pdr:minute', { detail: now }));
 }
 
-/* ---------- boot ---------- */
-
-function buildBoot() {
-    bootEl = $('boot');
-    bootEl.append(
-        h('div', { class: 'boot-inner' },
-            logoMark('boot-logo'),
-            h('div', { class: 'boot-name', id: 'boot-name' }, state.osName),
-            h('div', { class: 'boot-progress' }, h('span')),
-        ),
-    );
-}
-
-function runBoot() {
-    return new Promise((resolve) => {
-        $('boot-name').textContent = state.osName;
-        bootEl.classList.remove('is-hidden', 'is-done');
-        bootEl.classList.add('is-running');
-        setTimeout(() => {
-            bootEl.classList.add('is-done');
-            setTimeout(() => {
-                bootEl.classList.add('is-hidden');
-                bootEl.classList.remove('is-running', 'is-done');
-            }, 450);
-            resolve();
-        }, BOOT_MS);
-    });
-}
-
 /* ---------- lock screen ---------- */
 
 function buildLock() {
     lockEl = $('lock');
-    const panel = h('div', { class: 'lock-inner' },
-        h('div', { class: 'lock-top' },
-            icon('lock', 'lock-icon'),
+    lockInner = h('div', { class: 'lock-inner' },
+        h('div', { class: 'lock-clock' },
             h('div', { class: 'lock-time' }),
             h('div', { class: 'lock-date' }),
         ),
         h('div', { class: 'lock-notifs', id: 'lock-notifs' }),
         h('div', { class: 'lock-hint' }, icon('chevronUp'), h('span', null, 'Swipe up or click to unlock')),
     );
-    lockEl.append(panel);
+    lockEl.append(lockInner);
 
+    let dragged = false;
     drag(lockEl, {
-        onStart: () => lockEl.classList.add('is-dragging'),
+        onStart: () => { dragged = true; lockEl.classList.add('is-dragging'); },
         onMove: (dx, dy) => {
-            panel.style.transform = `translateY(${Math.min(0, dy)}px)`;
-            panel.style.opacity = String(1 + Math.min(0, dy) / (lockEl.clientHeight * 0.6));
+            const y = Math.min(0, dy);
+            lockInner.style.transform = `translateY(${y}px)`;
+            lockInner.style.opacity = String(1 + y / (lockEl.clientHeight * 0.6));
         },
-        onEnd: (dx, dy, e, ms, moved) => {
+        onEnd: (dx, dy, e, ms) => {
             lockEl.classList.remove('is-dragging');
-            panel.style.transform = '';
-            panel.style.opacity = '';
+            lockInner.style.transform = '';
+            lockInner.style.opacity = '';
             const fling = dy < -40 && ms < 300;
-            if (moved && (dy < -lockEl.clientHeight * 0.18 || fling)) Shell.unlock();
+            if (dy < -lockEl.clientHeight * 0.18 || fling) Shell.unlock();
+            // the click that follows a drag must not unlock
+            setTimeout(() => { dragged = false; }, 0);
         },
     });
-    // plain click anywhere that isn't a notification → unlock
     lockEl.addEventListener('click', (e) => {
-        if (!e.target.closest('.notif')) Shell.unlock();
+        if (dragged || e.target.closest('.notif')) return;
+        Shell.unlock();
     });
 }
 
 function renderLockNotifications() {
     const box = $('lock-notifs');
+    const all = Notifications.all();
     if (!settings.lockPreviews) {
-        const count = Notifications.all().length;
-        fill(box, count
-            ? h('div', { class: 'lock-count' }, icon('bell'), `${count} notification${count === 1 ? '' : 's'}`)
-            : '');
+        fill(box, all.length
+            ? h('div', { class: 'lock-count' }, icon('bell'), `${all.length} notification${all.length === 1 ? '' : 's'}`)
+            : null);
         return;
     }
-    fill(box, ...Notifications.all().slice(0, 3).map((n) => notificationCard(n, { compact: true })));
+    fill(box, all.slice(0, 3).map((n) => notificationCard(n, { compact: true })));
 }
 
-/* ---------- home bar (click = home, drag up / double click = app switcher) ---------- */
+/* ---------- home bar (click = home, swipe up = overview) ---------- */
 
 function buildHomeBar() {
     const bar = $('homebar');
     bar.append(h('span', { class: 'homebar-pill' }));
-    let lastClick = 0;
-
     drag(bar, {
         threshold: 6,
-        onMove: (dx, dy) => {
-            bar.style.setProperty('--pull', `${Math.min(0, dy)}px`);
-        },
+        onMove: (dx, dy) => bar.style.setProperty('--pull', `${Math.max(-40, Math.min(0, dy))}px`),
         onEnd: (dx, dy, e, ms, moved) => {
             bar.style.removeProperty('--pull');
             if (state.locked || !state.awake) return;
             if (moved) {
-                if (dy < -40) Switcher.open();
+                if (dy < -30) Shell.openOverlay('overview');
                 return;
             }
-            const now = performance.now();
-            if (now - lastClick < 320) {
-                Switcher.open();
-                lastClick = 0;
-                return;
-            }
-            lastClick = now;
             Shell.closeOverlays();
             if (state.view === 'app') Apps.home();
         },
@@ -210,10 +197,12 @@ function buildHomeBar() {
 export const Shell = {
     init() {
         device = $('device');
-        buildStatusBar();
-        buildBoot();
+        buildTopBar();
         buildLock();
         buildHomeBar();
+        Boot.init();
+
+        $('overlay-scrim').addEventListener('pointerdown', () => Shell.closeOverlays());
 
         applyAppearance();
         applyState();
@@ -222,25 +211,60 @@ export const Shell = {
         setInterval(() => tickClock(false), 1000);
 
         on('state', applyState);
+        on('running', renderWorkspaces);
         on('settings', (changed) => {
             applyAppearance(changed);
             if (changed.some((k) => ['clock24h', 'statusDate'].includes(k))) tickClock(true);
-            if (changed.includes('dnd')) renderStatusRight();
+            if (changed.includes('dnd')) { renderTray(); renderUnread(); }
             if (changed.includes('lockPreviews')) renderLockNotifications();
             if (changed.includes('lockEnabled') && !settings.lockEnabled && state.locked && state.awake) Shell.unlock();
         });
-        on('notifications', renderLockNotifications);
+        on('notifications', () => { renderLockNotifications(); renderUnread(); });
+        on('notification:open', (n) => {
+            Shell.closeOverlays();
+            Apps.launch(n.appId);   // deferred until unlock when locked
+            if (state.locked) Shell.unlock();
+        });
 
         document.addEventListener('keydown', (e) => {
             if (e.key !== 'Escape') return;
             if (Menu.isOpen()) Menu.close();
             else if (state.overlay) Shell.closeOverlays();
         });
+        log.ok('shell', 'Started Shell (top bar, lock screen, home bar).');
     },
+
+    /* overlays */
+
+    registerOverlay(name, handlers) {
+        overlays.set(name, handlers);
+    },
+
+    openOverlay(name) {
+        if (state.locked || !state.awake || !overlays.has(name)) return;
+        if (state.overlay === name) return;
+        Menu.close();
+        if (state.overlay) overlays.get(state.overlay)?.onClose?.();
+        overlays.get(name).onOpen?.();
+        setState({ overlay: name });
+    },
+
+    toggleOverlay(name) {
+        if (state.overlay === name) Shell.closeOverlays();
+        else Shell.openOverlay(name);
+    },
+
+    closeOverlays() {
+        Menu.close();
+        if (!state.overlay) return;
+        overlays.get(state.overlay)?.onClose?.();
+        setState({ overlay: null });
+    },
+
+    /* device */
 
     setOsName(name) {
         setState({ osName: String(name).slice(0, 24) });
-        $('boot-name').textContent = state.osName;
     },
 
     setStatus(status) {
@@ -249,18 +273,23 @@ export const Shell = {
         if ('charging' in status) s.charging = !!status.charging;
         if ('signal' in status) s.signal = status.signal == null ? null : Number(status.signal);
         if ('network' in status) s.network = status.network ? String(status.network).slice(0, 24) : null;
-        renderStatusRight();
+        renderTray();
+        document.dispatchEvent(new CustomEvent('pdr:status'));
     },
 
-    /** Tablet taken out. First wake of the session boots. */
+    /** Tablet taken out. The first wake of a session boots. */
     async wake() {
         if (state.awake) return;
         setState({ awake: true });
         tickClock(true);
+        log.info('power', 'Screen on');
 
         if (!state.booted) {
-            setState({ booted: true, locked: settings.lockEnabled });
-            if (settings.bootAnimation) await runBoot();
+            setState({ booted: true, booting: true, locked: settings.lockEnabled });
+            await Boot.run(settings.bootStyle);
+            setState({ booting: false });
+            // put away again while the boot screen was up
+            if (!state.awake) return;
         }
         if (!settings.lockEnabled) Shell.unlock();
         Bridge.emit('os:awake');
@@ -271,7 +300,9 @@ export const Shell = {
         if (!state.awake) return;
         Shell.closeOverlays();
         Apps.suspend();
-        setState({ awake: false, locked: settings.lockEnabled || state.locked });
+        Boot.cancel();
+        setState({ awake: false, booting: false, locked: settings.lockEnabled || state.locked });
+        log.info('power', 'Screen off');
         Bridge.emit('os:asleep');
     },
 
@@ -279,9 +310,11 @@ export const Shell = {
         Shell.closeOverlays();
         Apps.suspend();
         setState({ locked: true });
+        log.info('session', 'Locked');
     },
 
     unlock() {
+        if (!state.awake || state.booting) return;
         if (!state.locked) {
             Apps.resume();
             return;
@@ -290,18 +323,14 @@ export const Shell = {
         setState({ locked: false });
         setTimeout(() => lockEl.classList.remove('is-unlocking'), 400);
         Apps.resume();
+        log.info('session', 'Unlocked');
         Bridge.emit('os:unlocked');
-    },
-
-    closeOverlays() {
-        Menu.close();
-        if (state.overlay === 'panel') Panel.close();
-        if (state.overlay === 'switcher') Switcher.close();
     },
 
     /** Ask the integration to put the tablet away. */
     requestClose() {
         Shell.closeOverlays();
+        log.info('power', 'Power off requested (put away)');
         Bridge.emit('os:requestClose');
     },
 };

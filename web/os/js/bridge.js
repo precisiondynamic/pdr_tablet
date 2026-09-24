@@ -6,6 +6,8 @@
 // This is the only file that knows how messages travel. If your integration needs a different
 // transport, swap it out here.
 
+import { log } from './log.js';
+
 const params = new URLSearchParams(location.search);
 const framed = window.parent !== window;
 
@@ -15,6 +17,8 @@ const inCfx = typeof window.GetParentResourceName === 'function'
 
 const resource = params.get('resource')
     || (typeof window.GetParentResourceName === 'function' ? window.GetParentResourceName() : 'pdr_tablet');
+
+const mode = inCfx ? 'cfx' : framed ? 'harness' : 'standalone';
 
 const handlers = new Map();
 const pendingReplies = new Map();
@@ -46,11 +50,12 @@ window.addEventListener('message', (event) => {
     if (typeof msg.action !== 'string') return;
     const list = handlers.get(msg.action);
     if (!list) {
-        console.warn(`[pdr_tablet] no handler for action "${msg.action}"`);
+        log.warn('bridge', `Unknown action "${msg.action}"`);
         return;
     }
+    log.debug('bridge', `← ${msg.action}`);
     for (const fn of list) {
-        try { fn(msg); } catch (err) { console.error(`[pdr_tablet] action "${msg.action}" failed`, err); }
+        try { fn(msg); } catch (err) { log.error('bridge', `${msg.action}: ${err.message}`); }
     }
 });
 
@@ -78,14 +83,13 @@ async function call(event, data = {}) {
         });
     }
 
-    console.debug('[pdr_tablet] emit', event, data);
     return null;
 }
 
 export const Bridge = {
     resource,
-    inCfx,
-    standalone: !inCfx && !framed,
+    mode,
+    standalone: mode === 'standalone',
 
     on(action, fn) {
         if (!handlers.has(action)) handlers.set(action, []);
@@ -94,7 +98,10 @@ export const Bridge = {
 
     /** Fire-and-forget. Never throws. */
     emit(event, data) {
-        call(event, data).catch((err) => console.warn(`[pdr_tablet] emit "${event}" failed`, err));
+        // os:log must not log its own failures (it would loop)
+        call(event, data).catch((err) => {
+            if (event !== 'os:log') log.warn('bridge', `emit ${event} failed: ${err.message}`);
+        });
     },
 
     /** Resolves with the callback's response. Rejects if the transport fails. */

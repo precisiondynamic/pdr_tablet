@@ -99,8 +99,9 @@ tablet.launch('pdr_boosting', { contractId: 12 }); // open another installed app
 
 * **Pause work on `hide`.** The app stays loaded in the background (unless it's registered
   with `keepAlive: false`) and can be evicted when too many apps are open.
-* **Leave the frame to the OS.** It already draws the status bar and home bar around your
-  page. Your page fills the area between them.
+* **Leave the window chrome to the OS.** Your page sits inside a window with a
+  headerbar (your icon and label, a home button and a close button), below the top bar
+  and above the home bar. Don't draw your own title bar or close button.
 * **Size with relative units.** The DUI resolution is set by the integration, so use
   `rem`/`%`/`vh` rather than fixed pixels.
 * **Text input works** with `<input>` and `<textarea>`. Keys are relayed through the SDK when

@@ -1,27 +1,16 @@
-// Settings — the only built-in app. Rendered natively (not in an iframe).
+// Settings — the only built-in app. Rendered natively (not in an iframe), libadwaita style.
 
 import { Apps } from './apps.js';
 import { Bridge } from './bridge.js';
-import { state, settings, on, updateSettings, resetSettings } from './store.js';
+import { log } from './log.js';
+import { state, settings, settingsSource, on, updateSettings, resetSettings, ACCENTS } from './store.js';
 import { appTile, icon, logoMark } from './icons.js';
 import { WALLPAPERS, wallpaperCss, isSafeUrl } from './wallpapers.js';
 import { h, fill, slider } from './util.js';
 
-const ACCENTS = ['#3b82f6', '#6366f1', '#8b5cf6', '#ec4899', '#ef4444', '#f97316', '#f59e0b', '#22c55e', '#14b8a6'];
+/* ---------- widgets ---------- */
 
-/* ---------- controls ---------- */
-
-function toggle(key) {
-    const on = !!settings[key];
-    return h('button', {
-        class: `switch ${on ? 'is-on' : ''}`,
-        role: 'switch',
-        'aria-checked': String(on),
-        onClick: () => updateSettings({ [key]: !settings[key] }),
-    }, h('span'));
-}
-
-function toggleValue(value, onChange) {
+function switchFor(value, onChange) {
     return h('button', {
         class: `switch ${value ? 'is-on' : ''}`,
         role: 'switch',
@@ -30,245 +19,317 @@ function toggleValue(value, onChange) {
     }, h('span'));
 }
 
+const settingSwitch = (key) => switchFor(!!settings[key], (v) => updateSettings({ [key]: v }));
+
 function segmented(options, value, onChange) {
-    return h('div', { class: 'segmented' },
+    return h('div', { class: 'linked' },
         options.map(([v, label]) => h('button', {
-            class: v === value ? 'is-active' : '',
+            class: `linked-btn ${v === value ? 'is-active' : ''}`,
             onClick: () => onChange(v),
         }, label)),
     );
 }
 
-function row(label, control, desc) {
-    return h('div', { class: 'set-row' },
-        h('div', { class: 'set-row-text' },
-            h('div', { class: 'set-row-label' }, label),
-            desc ? h('div', { class: 'set-row-desc' }, desc) : null,
+/** libadwaita action row */
+function row(title, suffix, subtitle, { prefix = null, activatable = false } = {}) {
+    return h('div', { class: `row ${activatable ? 'is-activatable' : ''}` },
+        prefix,
+        h('div', { class: 'row-text' },
+            h('div', { class: 'row-title' }, title),
+            subtitle ? h('div', { class: 'row-subtitle' }, subtitle) : null,
         ),
-        control,
+        suffix ? h('div', { class: 'row-suffix' }, suffix) : null,
     );
 }
 
-const group = (title, ...rows) => h('section', { class: 'set-group' },
-    title ? h('h3', { class: 'set-group-title' }, title) : null,
-    h('div', { class: 'set-card' }, rows),
-);
+/** preferences group: title + boxed list */
+function group(title, description, ...rows) {
+    return h('section', { class: 'pref-group' },
+        title ? h('h3', { class: 'pref-title' }, title) : null,
+        description ? h('p', { class: 'pref-desc' }, description) : null,
+        h('div', { class: 'boxed-list' }, rows),
+    );
+}
 
-/* ---------- sections ---------- */
+const value = (text) => h('span', { class: 'row-value' }, text);
 
-const SECTIONS = [
-    {
-        id: 'display', label: 'Display', icon: 'display', color: '#3b82f6',
-        render: () => [
-            group('Appearance',
-                row('Theme', segmented([['dark', 'Dark'], ['light', 'Light']], settings.theme, (v) => updateSettings({ theme: v }))),
-                row('Accent color', h('div', { class: 'swatches' }, ACCENTS.map((c) => h('button', {
-                    class: `swatch ${settings.accent === c ? 'is-active' : ''}`,
-                    style: { background: c },
-                    title: c,
-                    onClick: () => updateSettings({ accent: c }),
-                })))),
-            ),
-            group('Brightness',
-                row('Screen brightness', h('div', { class: 'range-wrap' },
-                    icon('sunSmall'),
-                    slider({
-                        min: 10, max: 100, value: settings.brightness,
-                        onInput: (e) => updateSettings({ brightness: Number(e.target.value) }),
+/* ---------- pages ---------- */
+
+function stylePreview(theme) {
+    return h('button', {
+        class: `style-choice ${settings.theme === theme ? 'is-active' : ''}`,
+        onClick: () => updateSettings({ theme }),
+    },
+    h('span', { class: `style-thumb style-${theme}`, style: { background: wallpaperCss(settings) } },
+        h('span', { class: 'style-window' }, h('span', { class: 'style-headerbar' }), h('span', { class: 'style-body' }))),
+    h('span', { class: 'style-label' }, theme === 'dark' ? 'Dark' : 'Default'));
+}
+
+function appearancePage() {
+    const input = h('input', {
+        type: 'text',
+        class: 'entry',
+        placeholder: 'https://… image URL',
+        value: settings.customWallpaper,
+        spellcheck: false,
+    });
+    const error = h('div', { class: 'row-error' });
+    const apply = () => {
+        const url = input.value.trim();
+        if (!isSafeUrl(url)) {
+            error.textContent = 'Enter a valid http(s):// or nui:// image URL.';
+            return;
+        }
+        updateSettings({ customWallpaper: url, wallpaper: 'custom' });
+    };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') apply(); });
+
+    return [
+        h('div', { class: 'style-choices' }, stylePreview('light'), stylePreview('dark')),
+        group('Accent Color', null,
+            h('div', { class: 'row accent-row' }, ACCENTS.map((a) => h('button', {
+                class: `accent ${settings.accent === a.color ? 'is-active' : ''}`,
+                style: { background: a.color },
+                title: a.id,
+                onClick: () => updateSettings({ accent: a.color }),
+            }, icon('check'))))),
+        group('Background', null,
+            h('div', { class: 'wp-grid' }, WALLPAPERS.map((w) => h('button', {
+                class: `wp-item ${settings.wallpaper === w.id ? 'is-active' : ''}`,
+                title: w.name,
+                onClick: () => updateSettings({ wallpaper: w.id }),
+            }, h('span', { class: 'wp-preview', style: { background: w.css } }), h('span', { class: 'wp-name' }, w.name))))),
+        group('Custom Background', 'Any http(s):// or nui:// image. It is loaded on the tablet itself.',
+            h('div', { class: 'row row-stack' },
+                h('div', { class: 'entry-row' }, input, h('button', { class: 'btn btn-suggested', onClick: apply }, 'Apply')),
+                error)),
+    ];
+}
+
+function displayPage() {
+    return [
+        group('Brightness', null,
+            row('Screen Brightness', h('div', { class: 'range-wrap' },
+                slider({
+                    min: 10, max: 100, value: settings.brightness,
+                    onInput: (e) => updateSettings({ brightness: Number(e.target.value) }),
+                }))),
+        ),
+    ];
+}
+
+function notificationsPage() {
+    const apps = Apps.list({ includeHidden: true, includeSystem: false });
+    return [
+        group(null, null,
+            row('Do Not Disturb', settingSwitch('dnd'), 'Notifications are collected without banners.'),
+            row('Lock Screen Notifications', settingSwitch('lockPreviews'), 'Show notification content on the lock screen.'),
+        ),
+        group('App Notifications', null,
+            apps.length
+                ? apps.map((app) => row(app.label,
+                    switchFor(!settings.mutedApps.includes(app.id), (allow) => updateSettings({
+                        mutedApps: allow ? settings.mutedApps.filter((id) => id !== app.id) : [...settings.mutedApps, app.id],
+                    })),
+                    null,
+                    { prefix: appTile(app, 'tile-xs row-icon') }))
+                : h('div', { class: 'row row-placeholder' }, 'No apps installed.')),
+    ];
+}
+
+function lockPage() {
+    return [
+        group(null, null,
+            row('Lock Screen', settingSwitch('lockEnabled'), 'Show the lock screen whenever the tablet is taken out.'),
+        ),
+    ];
+}
+
+function dateTimePage() {
+    return [
+        group(null, null,
+            row('Time Format', segmented([[true, '24-hour'], [false, 'AM / PM']], settings.clock24h, (v) => updateSettings({ clock24h: v }))),
+            row('Date in Top Bar', settingSwitch('statusDate')),
+        ),
+    ];
+}
+
+function appsPage() {
+    const apps = Apps.list({ includeHidden: true, includeSystem: false });
+    if (!apps.length) {
+        return [h('div', { class: 'status-page' },
+            icon('grid', 'status-icon'),
+            h('div', { class: 'status-title' }, 'No Apps Installed'),
+            h('div', { class: 'status-desc' }, 'Compatible resources register their apps automatically when they start.'))];
+    }
+    return [group(`${apps.length} Installed`, null, apps.map((app) => {
+        const running = Apps.isRunning(app.id);
+        const pinned = settings.dock.includes(app.id);
+        return row(app.label,
+            h('div', { class: 'row-buttons' },
+                h('button', {
+                    class: 'btn',
+                    onClick: () => updateSettings({
+                        dock: pinned ? settings.dock.filter((id) => id !== app.id) : [...settings.dock, app.id],
                     }),
-                    icon('sun'),
-                )),
-            ),
-        ],
-    },
-    {
-        id: 'wallpaper', label: 'Wallpaper', icon: 'image', color: '#0ea5e9',
-        render: () => {
-            const input = h('input', {
-                type: 'text',
-                placeholder: 'https://… image URL',
-                value: settings.customWallpaper,
-                spellcheck: false,
-            });
-            const error = h('div', { class: 'set-error' });
-            const apply = () => {
-                const url = input.value.trim();
-                if (!isSafeUrl(url)) {
-                    error.textContent = 'Enter a valid http(s):// or nui:// image URL.';
-                    return;
-                }
-                updateSettings({ customWallpaper: url, wallpaper: 'custom' });
-            };
-            input.addEventListener('keydown', (e) => { if (e.key === 'Enter') apply(); });
-            return [
-                group('Presets',
-                    h('div', { class: 'wp-grid' }, WALLPAPERS.map((w) => h('button', {
-                        class: `wp-item ${settings.wallpaper === w.id ? 'is-active' : ''}`,
-                        onClick: () => updateSettings({ wallpaper: w.id }),
-                    }, h('span', { class: 'wp-preview', style: { background: w.css } }), h('span', { class: 'wp-name' }, w.name)))),
-                ),
-                group('Custom image',
-                    h('div', { class: 'set-row set-row-stack' },
-                        h('div', { class: 'input-row' }, input, h('button', { class: 'btn', onClick: apply }, 'Apply')),
-                        error,
-                        settings.wallpaper === 'custom'
-                            ? h('div', { class: 'wp-custom-preview', style: { background: wallpaperCss(settings) } })
-                            : null,
-                    ),
-                ),
-            ];
-        },
-    },
-    {
-        id: 'lock', label: 'Lock screen', icon: 'lock', color: '#64748b',
-        render: () => [
-            group(null,
-                row('Lock screen', toggle('lockEnabled'), 'Show the lock screen whenever the tablet is taken out.'),
-                row('Notification previews', toggle('lockPreviews'), 'Show notification content on the lock screen.'),
-                row('Boot animation', toggle('bootAnimation'), 'Play the startup animation the first time the tablet is used.'),
-            ),
-        ],
-    },
-    {
-        id: 'notifications', label: 'Notifications', icon: 'bell', color: '#ef4444',
-        render: () => {
-            const apps = Apps.list({ includeHidden: true, includeSystem: false });
-            return [
-                group(null, row('Do not disturb', toggle('dnd'), 'Notifications are collected silently without pop-ups.')),
-                group('Allow notifications',
-                    apps.length
-                        ? apps.map((app) => row(
-                            h('span', { class: 'set-app' }, appTile(app, 'tile-xs'), app.label),
-                            toggleValue(!settings.mutedApps.includes(app.id), (allow) => updateSettings({
-                                mutedApps: allow
-                                    ? settings.mutedApps.filter((id) => id !== app.id)
-                                    : [...settings.mutedApps, app.id],
-                            })),
-                        ))
-                        : h('div', { class: 'set-empty' }, 'No apps installed.'),
-                ),
-            ];
-        },
-    },
-    {
-        id: 'datetime', label: 'Date & time', icon: 'clock', color: '#f59e0b',
-        render: () => [
-            group(null,
-                row('24-hour time', toggle('clock24h')),
-                row('Date in status bar', toggle('statusDate')),
-            ),
-        ],
-    },
-    {
-        id: 'apps', label: 'Apps', icon: 'apps', color: '#8b5cf6',
-        render: () => {
-            const apps = Apps.list({ includeHidden: true, includeSystem: false });
-            if (!apps.length) {
-                return [group(null, h('div', { class: 'set-empty' },
-                    'No apps installed. Compatible resources register their apps automatically when they start.'))];
-            }
-            return [group(`${apps.length} installed`, apps.map((app) => {
-                const running = Apps.isRunning(app.id);
-                const pinned = settings.dock.includes(app.id);
-                return h('div', { class: 'set-row' },
-                    h('div', { class: 'set-app' },
-                        appTile(app, 'tile-sm'),
-                        h('div', null,
-                            h('div', { class: 'set-row-label' }, app.label),
-                            h('div', { class: 'set-row-desc' }, [
-                                running ? 'Running' : 'Not running',
-                                app.hidden ? 'Hidden' : null,
-                            ].filter(Boolean).join(' · ')),
-                        ),
-                    ),
-                    h('div', { class: 'set-actions' },
-                        h('button', {
-                            class: 'btn btn-ghost',
-                            onClick: () => updateSettings({
-                                dock: pinned ? settings.dock.filter((id) => id !== app.id) : [...settings.dock, app.id],
-                            }),
-                        }, pinned ? 'Unpin from dock' : 'Pin to dock'),
-                        running ? h('button', { class: 'btn btn-danger', onClick: () => Apps.close(app.id) }, 'Force stop') : null,
-                    ),
-                );
-            }))];
-        },
-    },
-    {
-        id: 'about', label: 'About', icon: 'info', color: '#22c55e',
-        render: () => [
-            h('div', { class: 'about-hero' },
-                logoMark('about-logo'),
-                h('div', { class: 'about-name' }, state.osName),
-                h('div', { class: 'about-version' }, `Version ${state.version}`),
-            ),
-            group(null,
-                state.deviceName ? row('Device', h('span', { class: 'set-value' }, state.deviceName)) : null,
-                row('Installed apps', h('span', { class: 'set-value' }, String(Apps.list({ includeHidden: true, includeSystem: false }).length))),
-                row('Open apps', h('span', { class: 'set-value' }, String(Apps.running().length))),
-                row('Resource', h('span', { class: 'set-value mono' }, Bridge.resource)),
-            ),
-            group(null,
-                row('Reset settings', h('button', { class: 'btn btn-danger', onClick: () => resetSettings() }, 'Reset'),
-                    'Restore every setting on this tablet to its default.'),
-            ),
-        ],
-    },
-];
-
-function render(root, current, select) {
-    const section = SECTIONS.find((s) => s.id === current) ?? SECTIONS[0];
-    const detail = h('div', { class: 'set-detail' },
-        h('h2', { class: 'set-title' }, section.label),
-        section.render(),
-    );
-    const scroll = root.querySelector('.set-detail')?.scrollTop ?? 0;
-    fill(root,
-        h('nav', { class: 'set-nav' },
-            h('div', { class: 'set-nav-title' }, 'Settings'),
-            SECTIONS.map((s) => h('button', {
-                class: `set-nav-item ${s.id === section.id ? 'is-active' : ''}`,
-                onClick: () => select(s.id),
-            }, h('span', { class: 'set-nav-icon', style: { background: s.color } }, icon(s.icon)), h('span', null, s.label),
-            icon('chevronRight', 'set-nav-chevron'))),
-        ),
-        detail,
-    );
-    detail.scrollTop = scroll;
+                }, pinned ? 'Unpin' : 'Pin to Dash'),
+                running ? h('button', { class: 'btn btn-destructive', onClick: () => Apps.close(app.id) }, 'Force Quit') : null),
+            [app.id, running ? 'Running' : null, app.hidden ? 'Hidden' : null].filter(Boolean).join(' · '),
+            { prefix: appTile(app, 'tile-sm row-icon') });
+    }))];
 }
+
+/* ---- system log (journal viewer) ---- */
+
+const LOG_FILTERS = [['all', 'All'], ['info', 'Info'], ['warn', 'Warnings'], ['error', 'Errors']];
+let logFilter = 'all';
+
+function passes(entry) {
+    if (logFilter === 'all') return true;
+    return log.LEVELS[entry.level] >= log.LEVELS[logFilter];
+}
+
+function journalLine(e) {
+    const t = new Date(e.time);
+    const ts = `${t.toTimeString().slice(0, 8)}.${String(t.getMilliseconds()).padStart(3, '0')}`;
+    return h('div', { class: `jl jl-${e.level}` },
+        h('span', { class: 'jl-time' }, ts),
+        h('span', { class: 'jl-level' }, e.level.toUpperCase()),
+        h('span', { class: 'jl-unit' }, e.unit),
+        h('span', { class: 'jl-msg' }, e.message));
+}
+
+function logPage(ctx) {
+    const box = h('div', { class: 'journal' });
+    const counts = { warn: 0, error: 0 };
+    for (const e of log.entries()) if (counts[e.level] !== undefined) counts[e.level]++;
+
+    const lines = log.entries().filter(passes).slice(-400).map(journalLine);
+    if (lines.length) box.append(...lines);
+    else box.append(h('div', { class: 'jl-empty' }, 'No entries'));
+    requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; });
+
+    // live tail while the page is open
+    ctx.cleanup = log.subscribe((e) => {
+        if (!passes(e)) return;
+        box.querySelector('.jl-empty')?.remove();
+        const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+        box.append(journalLine(e));
+        while (box.childElementCount > 400) box.firstElementChild.remove();
+        if (atBottom) box.scrollTop = box.scrollHeight;
+    });
+
+    return [
+        h('div', { class: 'journal-toolbar' },
+            segmented(LOG_FILTERS, logFilter, (v) => { logFilter = v; ctx.refresh(); }),
+            h('span', { class: 'journal-counts' },
+                `${log.entries().length} entries · ${counts.warn} warnings · ${counts.error} errors`),
+            h('button', { class: 'btn', onClick: () => { log.clear(); ctx.refresh(); } }, icon('trash'), 'Clear')),
+        box,
+    ];
+}
+
+function systemPage() {
+    return [
+        h('div', { class: 'about-hero' },
+            logoMark('about-logo'),
+            h('div', { class: 'about-name' }, state.osName),
+            h('div', { class: 'about-version' }, `Version ${state.version}`)),
+        group('Startup', null,
+            row('Boot Screen',
+                segmented([['verbose', 'Boot Log'], ['splash', 'Splash'], ['off', 'None']], settings.bootStyle,
+                    (v) => updateSettings({ bootStyle: v })),
+                'Shown the first time the tablet is used each session.'),
+        ),
+        group('System Details', null,
+            row('OS Name', value(state.osName)),
+            row('OS Version', value(state.version)),
+            state.deviceName ? row('Device', value(state.deviceName)) : null,
+            row('Display', value(`${innerWidth} × ${innerHeight}`)),
+            row('Resource', value(Bridge.resource)),
+            row('Transport', value(Bridge.mode)),
+            row('Settings Source', value(settingsSource)),
+            row('Installed Apps', value(String(Apps.list({ includeHidden: true, includeSystem: false }).length))),
+            row('Open Apps', value(String(Apps.running().length))),
+        ),
+        group(null, null,
+            row('Reset Settings', h('button', { class: 'btn btn-destructive', onClick: () => resetSettings() }, 'Reset'),
+                'Restore every setting on this tablet to its default.'),
+        ),
+    ];
+}
+
+const PAGES = [
+    { id: 'appearance', label: 'Appearance', icon: 'palette', render: appearancePage },
+    { id: 'display', label: 'Display', icon: 'display', render: displayPage },
+    { id: 'notifications', label: 'Notifications', icon: 'bell', render: notificationsPage },
+    { id: 'lock', label: 'Lock Screen', icon: 'lockScreen', render: lockPage },
+    { id: 'datetime', label: 'Date & Time', icon: 'clock', render: dateTimePage },
+    { id: 'apps', label: 'Apps', icon: 'grid', render: appsPage },
+    { id: 'log', label: 'System Log', icon: 'terminal', render: logPage, live: true },
+    { id: 'system', label: 'System', icon: 'system', render: systemPage },
+];
 
 export const SettingsApp = {
     id: 'system.settings',
     label: 'Settings',
-    color: '#475569',
+    color: '#5e5c64',
     systemIcon: 'gear',
     order: 1000,
 
-    render(frame) {
+    render(body) {
         const root = h('div', { class: 'settings' });
-        frame.append(root);
-        let current = SECTIONS[0].id;
-        const select = (id) => {
-            current = id;
-            root.querySelector('.set-detail')?.scrollTo(0, 0);
-            render(root, current, select);
-        };
-        const rerender = () => {
+        body.append(root);
+        let current = PAGES[0].id;
+        const ctx = { cleanup: null, refresh: () => draw(true) };
+
+        function draw(keepScroll) {
+            ctx.cleanup?.();
+            ctx.cleanup = null;
+            const page = PAGES.find((p) => p.id === current) ?? PAGES[0];
+            const prev = root.querySelector('.settings-content');
+            const scroll = keepScroll && prev ? prev.scrollTop : 0;
+
+            const content = h('div', { class: `settings-content ${page.live ? 'is-fill' : ''}` },
+                h('div', { class: 'clamp' },
+                    h('h2', { class: 'page-title' }, page.label),
+                    page.render(ctx)));
+            fill(root,
+                h('nav', { class: 'settings-sidebar' },
+                    PAGES.map((p) => h('button', {
+                        class: `sidebar-row ${p.id === page.id ? 'is-selected' : ''}`,
+                        onClick: () => { if (current !== p.id) { current = p.id; draw(false); } },
+                    }, icon(p.icon), h('span', null, p.label)))),
+                content);
+            content.scrollTop = scroll;
+        }
+
+        const redraw = () => {
+            if (current === 'log') return;    // the journal page updates itself
             // don't rebuild while the user is typing in a field
-            if (root.contains(document.activeElement) && document.activeElement.tagName === 'INPUT'
-                && document.activeElement.type === 'text') return;
-            render(root, current, select);
+            const a = document.activeElement;
+            if (root.contains(a) && a.tagName === 'INPUT' && a.type === 'text') return;
+            draw(true);
         };
-        render(root, current, select);
+        draw(false);
 
         const offs = [
-            on('settings', (changed) => { if (!(changed.length === 1 && changed[0] === 'brightness')) rerender(); }),
-            on('apps', rerender),
-            on('running', rerender),
+            on('settings', (changed) => { if (!(changed.length === 1 && changed[0] === 'brightness')) redraw(); }),
+            on('apps', redraw),
+            on('running', redraw),
         ];
         return {
-            show: rerender,
-            destroy: () => offs.forEach((off) => off()),
+            show: redraw,
+            launch: (data) => {
+                if (data && PAGES.some((p) => p.id === data.section)) {
+                    current = data.section;
+                    draw(false);
+                }
+            },
+            destroy: () => {
+                ctx.cleanup?.();
+                offs.forEach((off) => off());
+            },
         };
     },
 };

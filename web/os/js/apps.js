@@ -5,8 +5,9 @@
 // SDK events (`show` / `hide`).
 
 import { Bridge } from './bridge.js';
+import { log } from './log.js';
 import { state, settings, on, emit, setState, publicSettings } from './store.js';
-import { Notifications } from './notifications.js';
+import { appTile, icon } from './icons.js';
 import { h } from './util.js';
 
 const TAG = 1;
@@ -16,20 +17,20 @@ const registry = new Map();   // id → app descriptor
 const running = new Map();    // id → runtime record
 let foreground = null;        // id of the foreground app (may be suspended while locked/asleep)
 let suspended = true;         // true while the screen is off or the lock screen is up
-let pendingLaunch = null;     // launch requested while locked, performed after unlock
+let pendingLaunch = null;     // launch requested while suspended, performed on resume
 let layer = null;
 
 function normalize(input) {
     if (!input || typeof input !== 'object') throw new Error('app must be an object');
     const id = String(input.id ?? '').trim();
     if (!id) throw new Error('app.id is required');
-    if (!input.system && typeof input.url !== 'string') throw new Error(`app "${id}" needs a url`);
+    if (!input.system && (typeof input.url !== 'string' || !input.url.trim())) throw new Error(`app "${id}" needs a url`);
     return {
         id,
         label: String(input.label ?? id).slice(0, 40),
         icon: typeof input.icon === 'string' ? input.icon : null,
         color: typeof input.color === 'string' ? input.color : null,
-        url: input.url ?? null,
+        url: input.system ? null : input.url.trim(),
         order: Number.isFinite(Number(input.order)) ? Number(input.order) : 100,
         hidden: !!input.hidden,
         keepAlive: input.keepAlive !== false,
@@ -45,6 +46,7 @@ function sortApps(a, b) {
 }
 
 function lifecycle(id, appState, extra) {
+    log.debug('apps', `${id}: ${appState}`);
     Bridge.emit('app:lifecycle', { id, state: appState, ...extra });
     emit('lifecycle', id, appState);
 }
@@ -58,7 +60,8 @@ function post(r, type, payload = {}) {
 function deliver(r, type, payload) {
     if (r.app.system) return;
     if (!r.ready) {
-        r.queue.push([type, payload]);
+        // show/hide are covered by `visible` in the init message
+        if (type !== 'show' && type !== 'hide') r.queue.push([type, payload]);
         return;
     }
     post(r, type, payload);
@@ -68,27 +71,42 @@ function isVisible(id) {
     return foreground === id && !suspended && state.view === 'app';
 }
 
+function headerbar(app) {
+    return h('header', { class: 'headerbar' },
+        h('div', { class: 'hb-start' },
+            h('button', { class: 'hb-btn', title: 'Home', onClick: () => Apps.home() }, icon('home')),
+        ),
+        h('div', { class: 'hb-title' }, appTile(app, 'tile-xxs'), h('span', { class: 'hb-label' }, app.label)),
+        h('div', { class: 'hb-end' },
+            h('button', { class: 'hb-btn hb-close', title: 'Close', onClick: () => Apps.close(app.id) }, icon('close')),
+        ),
+    );
+}
+
 function spawn(app, launchData) {
-    const frame = h('div', { class: 'app-frame', 'data-app': app.id });
-    const r = { app, frame, iframe: null, ctl: null, ready: false, queue: [], lastUsed: Date.now(), launchData };
+    const body = h('div', { class: 'app-body' });
+    const frame = h('section', { class: 'app-frame', 'data-app': app.id }, headerbar(app), body);
+    const r = { app, frame, body, iframe: null, ctl: null, ready: false, queue: [], lastUsed: Date.now(), launchData };
 
     if (app.system) {
-        r.ctl = app.render?.(frame, {
-            home: () => Apps.home(),
-            close: () => Apps.close(app.id),
-        }) || {};
+        r.ctl = app.render?.(body, { home: () => Apps.home(), close: () => Apps.close(app.id) }) || {};
         r.ready = true;
+        if (launchData != null) r.ctl.launch?.(launchData);
     } else {
         const loader = h('div', { class: 'app-loader' }, h('span', { class: 'spinner' }));
         const iframe = h('iframe', { src: app.url, title: app.label });
         iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
         iframe.addEventListener('load', () => loader.remove(), { once: true });
-        frame.append(iframe, loader);
+        body.append(iframe, loader);
         r.iframe = iframe;
+        r.readyTimer = setTimeout(() => {
+            if (!r.ready && running.get(app.id) === r) log.warn('apps', `${app.id}: no SDK handshake after 10 s (messages and requests are unavailable)`);
+        }, 10000);
     }
 
     layer.append(frame);
     running.set(app.id, r);
+    log.info('apps', `Started ${app.id}`);
     lifecycle(app.id, 'launched', { data: launchData ?? null });
     return r;
 }
@@ -99,7 +117,7 @@ function show(r, origin) {
         ? `${origin.x - box.left}px ${origin.y - box.top}px`
         : '50% 50%';
     r.frame.classList.add('is-visible');
-    // next frame so the transition runs
+    // two frames so the transition runs from the hidden state
     requestAnimationFrame(() => requestAnimationFrame(() => {
         if (foreground === r.app.id) r.frame.classList.add('is-foreground');
     }));
@@ -126,7 +144,11 @@ function evictBackgroundApps() {
     const bg = [...running.values()]
         .filter((r) => r.app.id !== foreground)
         .sort((a, b) => a.lastUsed - b.lastUsed);
-    while (bg.length > state.maxBackgroundApps) Apps.close(bg.shift().app.id);
+    while (bg.length > state.maxBackgroundApps) {
+        const r = bg.shift();
+        log.info('apps', `Evicting ${r.app.id} (background limit ${state.maxBackgroundApps})`);
+        Apps.close(r.app.id);
+    }
 }
 
 function handleAppMessage(r, msg) {
@@ -134,6 +156,7 @@ function handleAppMessage(r, msg) {
     switch (msg.type) {
         case 'hello': {
             r.ready = true;
+            clearTimeout(r.readyTimer);
             post(r, 'init', {
                 appId: id,
                 launchData: r.launchData ?? null,
@@ -152,6 +175,7 @@ function handleAppMessage(r, msg) {
                 reply({ ok: false, error: 'action must be a non-empty string' });
                 break;
             }
+            log.debug('apps', `${id} → request ${msg.action}`);
             Bridge.call('app:request', { id, action: msg.action, data: msg.data ?? null })
                 .then((res) => {
                     // Integration may answer `{ ok, data }` / `{ ok: false, error }`, or just the data.
@@ -163,7 +187,10 @@ function handleAppMessage(r, msg) {
                         reply({ ok: true, data: res ?? null });
                     }
                 })
-                .catch((err) => reply({ ok: false, error: err?.message || 'Request failed' }));
+                .catch((err) => {
+                    log.warn('apps', `${id} request ${msg.action} failed: ${err?.message}`);
+                    reply({ ok: false, error: err?.message || 'Request failed' });
+                });
             break;
         }
         case 'home':
@@ -174,9 +201,10 @@ function handleAppMessage(r, msg) {
             break;
         case 'launch':
             if (typeof msg.id === 'string' && registry.has(msg.id)) Apps.launch(msg.id, msg.data);
+            else log.warn('apps', `${id} tried to launch unknown app "${msg.id}"`);
             break;
         case 'notify':
-            Notifications.push({ appId: id, title: msg.title, body: msg.body });
+            emit('app:notify', { appId: id, title: msg.title, body: msg.body });
             break;
         case 'badge':
             Apps.setBadge(id, msg.count);
@@ -211,24 +239,30 @@ export const Apps = {
     /* ---------- registry ---------- */
 
     register(input, { system = false } = {}) {
-        const clean = { ...input, system };
-        const app = normalize(clean);
+        const app = normalize({ ...input, system });
         const prev = registry.get(app.id);
         if (prev?.system && !system) throw new Error(`"${app.id}" is a system app id`);
         registry.set(app.id, app);
 
         const r = running.get(app.id);
         if (r) {
-            if (prev && prev.url !== app.url) Apps.close(app.id);   // entry changed → restart it
-            else r.app = app;
+            if (prev && prev.url !== app.url) {
+                log.info('apps', `${app.id}: entry URL changed, restarting`);
+                Apps.close(app.id);
+            } else {
+                r.app = app;
+                r.frame.querySelector('.hb-label').textContent = app.label;
+            }
         }
+        log.info('apps', `${prev ? 'Updated' : 'Registered'} ${app.id}${app.hidden ? ' (hidden)' : ''}`);
         emit('apps');
         return app;
     },
 
     update(id, patch) {
         const cur = registry.get(id);
-        if (!cur || cur.system || !patch || typeof patch !== 'object') return;
+        if (!cur) return log.warn('apps', `update: unknown app "${id}"`);
+        if (cur.system || !patch || typeof patch !== 'object') return;
         Apps.register({ ...cur, ...patch, id });
     },
 
@@ -237,18 +271,30 @@ export const Apps = {
         if (!app || app.system) return;
         Apps.close(id);
         registry.delete(id);
+        log.info('apps', `Unregistered ${id}`);
         emit('apps');
+        emit('app:removed', id);
     },
 
-    /** Replace every non-system app (e.g. after the integration restarts). */
+    /**
+     * Make the registry match `list` exactly: apps that are still listed keep running,
+     * apps that disappeared are closed and removed.
+     */
     setAll(list) {
-        for (const [id, app] of registry) {
-            if (app.system) continue;
-            Apps.close(id);
-            registry.delete(id);
+        const incoming = new Map();
+        for (const item of Array.isArray(list) ? list : []) {
+            try {
+                const app = normalize({ ...item, system: false });
+                incoming.set(app.id, item);
+            } catch (err) {
+                log.error('apps', `Rejected app: ${err.message}`);
+            }
         }
-        for (const app of Array.isArray(list) ? list : []) {
-            try { Apps.register(app); } catch (err) { console.error('[pdr_tablet]', err.message); }
+        for (const [id, app] of registry) {
+            if (!app.system && !incoming.has(id)) Apps.unregister(id);
+        }
+        for (const item of incoming.values()) {
+            try { Apps.register(item); } catch (err) { log.error('apps', err.message); }
         }
         emit('apps');
     },
@@ -286,11 +332,12 @@ export const Apps = {
     launch(id, data, origin) {
         const app = registry.get(id);
         if (!app) {
-            console.warn(`[pdr_tablet] launch: unknown app "${id}"`);
+            log.warn('apps', `launch: unknown app "${id}"`);
             return;
         }
         if (suspended) {
             pendingLaunch = { id, data };
+            log.debug('apps', `${id}: launch deferred until unlock`);
             return;
         }
 
@@ -299,11 +346,12 @@ export const Apps = {
         if (!r) r = spawn(app, data);
         else if (data !== undefined) {
             r.launchData = data;
-            deliver(r, 'launch', { data });
+            if (r.app.system) r.ctl.launch?.(data);
+            else deliver(r, 'launch', { data });
         }
 
-        if (prev && prev !== r) toBackground(prev);
         const wasVisible = isVisible(id);
+        if (prev && prev !== r) toBackground(prev);
         foreground = id;
         r.lastUsed = Date.now();
         setState({ view: 'app' });
@@ -333,6 +381,7 @@ export const Apps = {
         const r = running.get(id);
         if (!r) return;
         running.delete(id);
+        clearTimeout(r.readyTimer);
         if (foreground === id) {
             foreground = null;
             setState({ view: 'home' });
@@ -340,6 +389,7 @@ export const Apps = {
         r.frame.classList.remove('is-foreground');
         r.ctl?.destroy?.();
         setTimeout(() => r.frame.remove(), ANIM_MS);
+        log.info('apps', `Stopped ${id}`);
         lifecycle(id, 'closed');
         emit('running');
     },
@@ -351,7 +401,8 @@ export const Apps = {
     /** Send an integration message to an app page (SDK `message` event). */
     message(id, event, data) {
         const r = running.get(id);
-        if (r) deliver(r, 'message', { event: String(event), data: data ?? null });
+        if (!r) return log.debug('apps', `message "${event}" dropped: ${id} is not running`);
+        deliver(r, 'message', { event: String(event), data: data ?? null });
     },
 
     /** Screen off / lock screen up: the foreground app is hidden but stays foreground. */

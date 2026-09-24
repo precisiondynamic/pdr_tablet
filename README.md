@@ -4,8 +4,14 @@ A physical tablet platform for FiveM. This repository currently holds the **tabl
 UI that renders on the tablet's screen, plus the **SDK** other resources use to put their
 apps on it.
 
-The OS is deliberately small: boot, lock screen, home screen, app launcher, dock, app
-switcher, quick panel, notifications and Settings. It ships with no gameplay apps. Criminal,
+The OS looks and behaves like a GNOME / libadwaita tablet: a top bar with Activities,
+clock and system menu, a lock screen, an app grid with search, a dash, an activities
+overview, a message tray with calendar, quick settings, notifications, and a Settings
+app. It ships with no gameplay apps.
+
+It keeps a real system journal. The first boot of a session prints it systemd-style
+(`[  OK  ] Started App Host.`), Settings › System Log shows it live, and warnings/errors
+are sent to the integration as `os:log` so they reach the F8 console. Criminal,
 MDT, banking and the like are separate resources that register themselves and show up
 automatically.
 
@@ -16,6 +22,7 @@ web/
   os/             the OS page (load it in the DUI)   → nui://pdr_tablet/web/os/index.html
     css/os.css
     js/           ES modules, no build step
+    fonts/        Cantarell + JetBrains Mono (SIL OFL, licenses alongside)
   sdk/
     pdr-tablet.js script that app pages include      → https://cfx-nui-pdr_tablet/web/sdk/pdr-tablet.js
   dev/            browser dev harness + SDK test page (not listed in fxmanifest, never shipped)

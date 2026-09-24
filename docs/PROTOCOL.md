@@ -30,7 +30,7 @@ String payloads are parsed automatically, so both `SendDuiMessage` and `SendNUIM
 | action | payload | effect |
 |---|---|---|
 | `os:init` | `{ settings?, apps?, status?, osName?, deviceName?, maxBackgroundApps? }` | One-shot setup after `os:ready`. Every field is optional. |
-| `os:wake` | – | Tablet taken out. The first wake of a session plays the boot animation, then the lock screen if it's enabled. |
+| `os:wake` | – | Tablet taken out. The first wake of a session runs the boot screen (`bootStyle`: a systemd-style log of the real startup journal, a splash, or nothing), then the lock screen if it's enabled. |
 | `os:sleep` | – | Tablet put away. The screen goes black, the foreground app gets `hide`, and it locks if the lock screen is enabled. |
 | `os:lock` | – | Show the lock screen. |
 | `os:unlock` | – | Dismiss the lock screen (if awake). |
@@ -41,7 +41,7 @@ String payloads are parsed automatically, so both `SendDuiMessage` and `SendNUIM
 
 | action | payload | effect |
 |---|---|---|
-| `apps:set` | `{ apps: App[] }` | Replace every registered app (useful after your integration restarts). |
+| `apps:set` | `{ apps: App[] }` | Make the registry match this list (useful after your integration restarts). Running apps that are still listed keep running. |
 | `apps:register` | `{ app: App }` | Add, or replace by `id`. If a running app's `url` changes, it's restarted. |
 | `apps:update` | `{ id, patch }` | Partial update (label, icon, color, hidden, badge, order…). |
 | `apps:unregister` | `{ id }` | Remove it and close it if running. Call this when the owning resource stops. |
@@ -93,9 +93,10 @@ each event you care about. `app:request` is the only one whose response is used.
 | event | body | notes |
 |---|---|---|
 | `os:ready` | `{ version }` | Page loaded. Send `os:init` in response. Also fires after a DUI reload. |
+| `os:log` | `{ level, unit, message, uptime }` | Every `warn`/`error` written to the system journal (bad app descriptors, failed requests, script errors…). Print it to the F8 console so problems are visible in-game. |
 | `os:awake` / `os:asleep` | `{}` | Echo of wake/sleep. |
 | `os:unlocked` | `{}` | The user unlocked. |
-| `os:requestClose` | `{}` | The user pressed **Put away** in the quick panel. Put the tablet away (then send `os:sleep`). |
+| `os:requestClose` | `{}` | The user pressed the power button in the system menu. Put the tablet away (then send `os:sleep`). |
 | `os:settingsChanged` | `{ settings, changed: string[] }` | Persist it (e.g. `SetResourceKvp`) and send it back via `os:init`/`os:settings` next session. |
 | `app:lifecycle` | `{ id, state, data? }` | `state` is one of `launched`, `ready`, `foreground`, `background`, `closed`. Route it to the owning resource's hooks. |
 | `app:request` | `{ id, action, data }` | From the SDK's `tablet.request()`. **Respond** with `{ ok = true, data = … }` or `{ ok = false, error = '…' }`. Any other value is treated as `data`. |
@@ -124,17 +125,21 @@ registered ─▶ launched ─▶ ready ─▶ foreground ⇄ background ─▶ 
 * Going home, switching apps, sleeping or locking → `background`. Waking/unlocking back into the app → `foreground`.
 * With `keepAlive: false` the app is closed right after `background`.
 * No more than `maxBackgroundApps` (default 4) apps stay loaded in the background; the least recently used are closed first.
-* `closed` fires for user closes (switcher, context menu, Settings › Apps), `apps:close`, `apps:unregister`, eviction, and a registration whose `url` changed.
+* `closed` fires for user closes (window close button, overview, context menu **Quit**, Settings › Apps), `apps:close`, `apps:unregister`, eviction, and a registration whose `url` changed.
+* `apps:set` diffs against what's registered: listed apps are updated in place (running ones keep running), unlisted ones are unregistered.
 
 ## Settings object
 
 ```js
 {
-  theme: 'dark' | 'light', accent: '#3b82f6', wallpaper: 'bloom' | 'aurora' | 'dusk' | 'ocean' | 'forest' | 'graphite' | 'custom',
-  customWallpaper: '', brightness: 10..100, lockEnabled: true, lockPreviews: true, bootAnimation: true,
+  theme: 'dark' | 'light', accent: '#3584e4',
+  wallpaper: 'adwaita' | 'aubergine' | 'arch' | 'mint' | 'plasma' | 'slate' | 'custom', customWallpaper: '',
+  brightness: 10..100, lockEnabled: true, lockPreviews: true, bootStyle: 'verbose' | 'splash' | 'off',
   dnd: false, clock24h: true, statusDate: true, dock: ['system.settings'], mutedApps: []
 }
 ```
+
+Settings saved by v1.0 are migrated (`bootAnimation: true/false` becomes `bootStyle: 'verbose'/'off'`).
 
 Unknown keys and invalid values are dropped. The OS also caches settings in the page's
 `localStorage`, but treat your KVP copy as the source of truth.
@@ -155,6 +160,9 @@ RegisterNUICallback('os:settingsChanged', function(body, cb)
     SetResourceKvp('settings', json.encode(body.settings)); cb({})
 end)
 RegisterNUICallback('os:requestClose', function(_, cb) putAway(); cb({}) end)
+RegisterNUICallback('os:log', function(e, cb)
+    print(('[pdr_tablet] %s %s: %s'):format(e.level, e.unit, e.message)); cb({})
+end)
 
 -- take out / put away
 send({ action = 'os:wake' })
