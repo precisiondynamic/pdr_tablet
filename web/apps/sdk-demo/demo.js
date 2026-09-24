@@ -49,6 +49,11 @@
 
     /* ---------- lifecycle ---------- */
 
+    // every launch payload this page received, for automated tests: [{ via, data }]
+    window.__launches = [];
+    T.ready().then(function () { if (T.launchData != null) window.__launches.push({ via: 'init', data: T.launchData }); });
+    T.on('launch', function (d) { window.__launches.push({ via: 'launch', data: d }); });
+
     ['ready', 'show', 'hide', 'launch', 'settings', 'message'].forEach(function (ev) {
         T.on(ev, function (a, b) {
             log('event ' + ev + (a !== undefined ? ' ' + json(a) : '') + (b !== undefined ? ' ' + json(b) : ''), ev === 'hide' ? 'dim' : 'ok');
@@ -80,7 +85,7 @@
     $('nav-home').onclick = function () { log('home()'); T.home(); };
     $('nav-close').onclick = function () { log('close()'); T.close(); };
     $('nav-bounce').onclick = function () {
-        log('home(); relaunching self in 3s (watch hide → show)');
+        log('home(); trying launch(self) from the background in 3s — the OS must refuse (focus stealing)');
         T.home();
         setTimeout(function () { T.launch(T.appId, { bounced: Date.now() }); }, 3000);
     };

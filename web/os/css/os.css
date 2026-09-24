@@ -436,6 +436,12 @@ input { font: inherit; color: inherit; user-select: text; }
     transition: transform .3s var(--ease-out), opacity .2s var(--ease), border-radius .3s var(--ease-out);
 }
 .app-frame.is-visible { display: flex; }
+/* the lock screen is see-through: app content must not show behind it, and nothing needs
+   painting while the screen is off */
+.device.is-locked .apps,
+.device.is-asleep .apps,
+.device.is-asleep .home,
+.device.is-asleep .dash { visibility: hidden; }
 .app-frame.is-foreground { opacity: 1; transform: none; border-radius: 0; pointer-events: auto; }
 .device[data-overlay="overview"] .app-frame { opacity: 0; pointer-events: none; }
 

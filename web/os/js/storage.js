@@ -6,6 +6,7 @@
 
 import { Bridge } from './bridge.js';
 import { log } from './log.js';
+import { state } from './store.js';
 
 const PREFIX = 'pdr_tablet:app:';
 export const STORAGE_QUOTA = 512 * 1024;
@@ -13,21 +14,47 @@ const MAX_KEY = 128;
 
 const stores = new Map();   // appId → plain object
 
+let persistWarned = false;
+
 function load(id) {
     if (!stores.has(id)) {
         let data = {};
-        try { data = JSON.parse(localStorage.getItem(PREFIX + id) || '{}'); } catch { /* corrupt → empty */ }
-        stores.set(id, data && typeof data === 'object' && !Array.isArray(data) ? data : {});
+        if (state.storageMode === 'local') {
+            let raw = null;
+            try { raw = localStorage.getItem(PREFIX + id); } catch { /* storage unavailable */ }
+            if (raw) {
+                try { data = JSON.parse(raw); } catch { data = null; }
+                if (!data || typeof data !== 'object' || Array.isArray(data)) {
+                    log.warn('storage', `Stored data for ${id} was corrupt and has been reset`);
+                    data = {};
+                    try { localStorage.removeItem(PREFIX + id); } catch { /* ignore */ }
+                }
+            }
+        }
+        stores.set(id, data);
     }
     return stores.get(id);
 }
 
 function persist(id) {
-    try { localStorage.setItem(PREFIX + id, JSON.stringify(stores.get(id))); } catch { /* storage unavailable */ }
+    if (state.storageMode !== 'local') return;
+    try {
+        localStorage.setItem(PREFIX + id, JSON.stringify(stores.get(id)));
+    } catch (err) {
+        // the page's own quota (~5 MB for all apps) — the integration's copy is still intact
+        if (!persistWarned) { persistWarned = true; log.warn('storage', `Local cache full or unavailable (${err.name}); relying on the integration`); }
+    }
+}
+
+function localKeys() {
+    const out = [];
+    try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith(PREFIX)) out.push(k); } } catch { /* ignore */ }
+    return out;
 }
 
 function checkKey(key) {
     if (typeof key !== 'string' || !key || key.length > MAX_KEY) throw new Error(`key must be a string of 1–${MAX_KEY} characters`);
+    if (key === '__proto__') throw new Error('key "__proto__" is reserved');
 }
 
 export const AppStorage = {
@@ -71,9 +98,24 @@ export const AppStorage = {
     /** Replace an app's data with what the integration saved (no echo back). */
     seed(id, data) {
         if (!id || !data || typeof data !== 'object' || Array.isArray(data)) return;
-        stores.set(id, JSON.parse(JSON.stringify(data)));
+        let copy;
+        try { copy = JSON.parse(JSON.stringify(data)); } catch { log.warn('storage', `Seed for ${id} is not JSON; ignored`); return; }
+        if (JSON.stringify(copy).length > STORAGE_QUOTA) log.warn('storage', `Seed for ${id} is over quota; writes will fail until it shrinks`);
+        stores.set(id, copy);
         persist(id);
         log.debug('storage', `Seeded ${id} (${AppStorage.size(id)} bytes)`);
+    },
+
+    /** Forget every app's data (memory and local cache), e.g. when the character changes. */
+    wipeAll() {
+        stores.clear();
+        localKeys().forEach((k) => { try { localStorage.removeItem(k); } catch { /* ignore */ } });
+    },
+
+    /** Switch between caching app data locally and keeping it in memory only. */
+    setMode(mode) {
+        state.storageMode = mode === 'host' ? 'host' : 'local';
+        if (state.storageMode === 'host') localKeys().forEach((k) => { try { localStorage.removeItem(k); } catch { /* ignore */ } });
     },
 
     wipe(id) {

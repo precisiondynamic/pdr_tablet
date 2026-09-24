@@ -59,14 +59,16 @@ function banner(n, duration) {
     setTimeout(remove, duration);
 }
 
-function sanitizeData(value) {
+function sanitizeData(value, appId) {
     if (value === undefined || value === null) return undefined;
     try {
         const json = JSON.stringify(value);
-        return json.length <= 4096 ? JSON.parse(json) : undefined;
+        if (json.length <= 4096) return JSON.parse(json);
+        log.warn('notify', `${appId ?? 'host'}: notification data over 4 KB dropped (the notification is kept)`);
     } catch {
-        return undefined;
+        log.warn('notify', `${appId ?? 'host'}: notification data is not JSON; dropped`);
     }
+    return undefined;
 }
 
 export const Notifications = {
@@ -85,8 +87,9 @@ export const Notifications = {
      * @param {{ appId?: string, title?: string, body?: string, data?: any, duration?: number }} data
      */
     push(data = {}) {
-        const app = data.appId ? Apps.get(data.appId) : null;
-        if (data.appId && !app) {
+        if (!data || typeof data !== 'object') return null;
+        const app = typeof data.appId === 'string' && data.appId ? Apps.get(data.appId) : null;
+        if (data.appId != null && !app) {
             log.warn('notify', `Dropped notification from unknown app "${data.appId}"`);
             return null;
         }
@@ -101,7 +104,7 @@ export const Notifications = {
             title: String(data.title ?? app?.label ?? 'Notification').slice(0, 80),
             body: String(data.body ?? '').slice(0, 280),
             // opaque payload handed back to the app as launch data when the notification is tapped
-            data: sanitizeData(data.data),
+            data: sanitizeData(data.data, app?.id),
             time: Date.now(),
         };
         list.unshift(n);

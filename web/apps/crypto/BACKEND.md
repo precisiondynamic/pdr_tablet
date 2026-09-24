@@ -60,10 +60,27 @@ Tx = {
 ## Prices
 
 Prices come from `js/market.js`, a pure function of `(symbol, time)`. Every client computes
-the same price for the same millisecond, with no network traffic. To execute trades
-server-side at the same prices, port `price(sym, t)` to Lua (it's ~40 lines: an integer hash,
-value noise and a sum of octaves) or run it with a JS runtime. The coin list (`COINS`), the
-octave table and the seeds must match exactly.
+the same price for the same millisecond, with no network traffic.
+
+**`lib/lsx_market.lua`** is a Lua 5.4 port that produces the *same* prices (tested against the
+JS engine: 4,050 samples, max relative error 3e-16). Execute trades with it:
+
+```lua
+server_scripts { '@pdr_tablet/lib/lsx_market.lua', '@pdr_tablet/lib/validate.lua', '@pdr_tablet/lib/guard.lua' }
+
+local price = LSXMarket.price(sym, os.time() * 1000)
+-- or, if you accept the price the player saw:
+local ok, serverPrice = LSXMarket.verifyQuote(sym, clientPrice, os.time() * 1000)   -- ±5 s skew, 0.05 %
+```
+
+If you change coins in `market.js`, change them in `lsx_market.lua` too (same order, bases,
+vols and seeds). `tests/run.sh market` checks they still agree.
+
+## Validation
+
+Every field above is player-controlled. Use `lib/validate.lua` + `lib/guard.lua` (see
+`docs/HARDENING.md`) to reject malformed or oversized requests and rate-limit per player
+before touching balances.
 
 The shared accounting in `js/backend.js` (`applyTrade`, `applyTransfer`, `applyCash`) is the reference
 behaviour for fees, minimums and cost basis.

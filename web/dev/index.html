@@ -111,7 +111,20 @@
     window.addEventListener('message', (e) => {
         const m = e.data;
         if (!m || !m.__pdrTabletEmit) return;
-        log('out', `${m.event} ${JSON.stringify(m.data)}`);
+        const logged = JSON.stringify(m.data);
+        log('out', `${m.event} ${logged.length > 400 ? logged.slice(0, 400) + '…' : logged}`);
+        window.harnessReceived = window.harnessReceived || {};
+        const key = m.event === 'app:request' ? 'request:' + m.data.action : m.event;
+        window.harnessReceived[key] = (window.harnessReceived[key] || 0) + 1;
+        // mirror app storage like an integration would (KVP), so restarts can be re-seeded
+        if (m.event === 'app:storage') {
+            const st = (window.harnessStorage = window.harnessStorage || {});
+            if (m.data.cleared) st[m.data.id] = {};
+            else {
+                st[m.data.id] = st[m.data.id] || {};
+                if (m.data.value === null) delete st[m.data.id][m.data.key]; else st[m.data.id][m.data.key] = m.data.value;
+            }
+        }
         let result = null;
         if (m.event === 'app:request') {
             // stand-in for the owning resource's onRequest handler; tests can install fakes per action
@@ -120,6 +133,8 @@
                 ? fake(m.data)
                 : { ok: true, data: { echo: m.data.data, action: m.data.action, at: new Date().toLocaleTimeString() } };
         }
+        // a fake can return this to simulate an integration that never calls cb()
+        if (result === '__NO_REPLY__') return;
         e.source.postMessage({ __pdrTabletReply: true, id: m.id, result }, '*');
     });
 

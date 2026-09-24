@@ -32,6 +32,12 @@ function preview(app) {
             item.style.transform = `translateY(${y}px)`;
             item.style.opacity = String(1 + y / 300);
         },
+        onCancel: () => {
+            item.classList.remove('is-dragging');
+            item.style.transform = '';
+            item.style.opacity = '';
+            dragged = false;
+        },
         onEnd: (dx, dy) => {
             item.classList.remove('is-dragging');
             if (dy < -90) {

@@ -9,7 +9,7 @@ import { AppStorage } from './storage.js';
 import { state, settings, settingsSource, on, updateSettings, resetSettings, ACCENTS, SLIDER_KEYS } from './store.js';
 import { appTile, icon, logoMark } from './icons.js';
 import { WALLPAPERS, wallpaperCss, isSafeUrl } from './wallpapers.js';
-import { h, fill, slider, formatDate, formatTime } from './util.js';
+import { h, fill, slider, formatDate, formatTime, coalesce } from './util.js';
 
 /* ---------- widgets ---------- */
 
@@ -409,13 +409,13 @@ export const SettingsApp = {
             content.scrollTop = scroll;
         }
 
-        const redraw = () => {
+        const redraw = coalesce(() => {
             if (current === 'log') return;    // the journal page updates itself
             // don't rebuild while the user is typing in a field
             const a = document.activeElement;
             if (root.contains(a) && a.tagName === 'INPUT' && a.type === 'text') return;
             draw(true);
-        };
+        });
         draw(false);
         redrawSettings = () => draw(true);
 

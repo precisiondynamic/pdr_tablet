@@ -12,7 +12,12 @@
 (function (global) {
     'use strict';
 
+    // loaded twice (two <script> tags, a bundler + a tag…): keep the first instance, or every
+    // message would be handled twice
+    if (global.PDRTablet && global.PDRTablet.__sdk) return;
+
     var TAG = 1;
+    var SDK_VERSION = 2;          // 2: heartbeat, focus + error reporting
     // the OS page loads this file only for the key helpers and sets __PDR_TABLET_OS__
     var inTablet = global.parent !== global && !global.__PDR_TABLET_OS__;
     var listeners = {};
@@ -143,11 +148,19 @@
     /* messaging                                                           */
     /* ------------------------------------------------------------------ */
 
-    function post(type, payload) {
-        if (!inTablet) return;
+    /** Returns false (and warns) instead of throwing when the payload can't be sent. */
+    function post(type, payload, strict) {
+        if (!inTablet) return false;
         var msg = { __pdrTablet: TAG, type: type };
         if (payload) for (var k in payload) if (Object.prototype.hasOwnProperty.call(payload, k)) msg[k] = payload[k];
-        global.parent.postMessage(msg, '*');
+        try {
+            global.parent.postMessage(msg, '*');
+            return true;
+        } catch (e) {
+            if (strict) throw e;
+            console.warn('[PDRTablet] ' + type + ' could not be sent: ' + e.message);
+            return false;
+        }
     }
 
     function fire(event) {
@@ -175,8 +188,19 @@
             };
             var msg = { rid: id };
             for (var k in payload) if (Object.prototype.hasOwnProperty.call(payload, k)) msg[k] = payload[k];
-            post(type, msg);
+            try {
+                post(type, msg, true);
+            } catch (e) {
+                clearTimeout(pending[id].timer);
+                delete pending[id];
+                reject(new Error(label + ': ' + (e.name === 'DataCloneError' ? 'data must be JSON-serialisable' : e.message)));
+            }
         });
+    }
+
+    function setVisibleAttr(v) {
+        var root = global.document && global.document.documentElement;
+        if (root) root.setAttribute('data-tablet-visible', v ? 'true' : 'false');
     }
 
     function applyTheme() {
@@ -207,6 +231,7 @@
                         visible: !!m.visible,
                     };
                     applyTheme();
+                    setVisibleAttr(ctx.visible);
                     resolveReady();
                     fire('ready', api);
                     if (ctx.visible) fire('show');
@@ -217,11 +242,17 @@
                     break;
                 case 'show':
                     if (ctx) ctx.visible = true;
+                    setVisibleAttr(true);
                     fire('show');
                     break;
                 case 'hide':
                     if (ctx) ctx.visible = false;
+                    setVisibleAttr(false);
                     fire('hide');
+                    break;
+                case 'ping':
+                    // heartbeat: answered from the event loop, so a hung page stops answering
+                    if (!api.__debug.noPong) post('pong');
                     break;
                 case 'message':
                     fire('message', m.event, m.data);
@@ -324,10 +355,39 @@
         // used by the OS itself for its own inputs
         injectKey: injectKey,
         insertText: insertText,
+
+        __sdk: SDK_VERSION,
+        __debug: { noPong: false },   // tests: simulate a hung app
     };
 
     global.PDRTablet = api;
 
-    // announce ourselves; the tablet answers with `init`
-    if (inTablet) post('hello');
+    if (inTablet) {
+        // tell the tablet when a text field gains/loses focus, so the integration only
+        // captures the keyboard while someone is actually typing
+        var lastEditable = null;
+        var reportFocus = function () {
+            setTimeout(function () {
+                var ed = isEditable(global.document.activeElement);
+                if (ed !== lastEditable) { lastEditable = ed; post('focus', { editable: ed }); }
+            }, 0);
+        };
+        global.addEventListener('focusin', reportFocus, true);
+        global.addEventListener('focusout', reportFocus, true);
+
+        // uncaught errors land in the tablet's System Log (rate limited on both ends)
+        var reported = 0;
+        var reportError = function (message, source, line) {
+            if (++reported > 20) return;
+            post('error', { message: String(message || 'Error').slice(0, 300), source: source ? String(source).slice(0, 200) : '', line: line || 0 });
+        };
+        global.addEventListener('error', function (e) { reportError(e.message, e.filename, e.lineno); });
+        global.addEventListener('unhandledrejection', function (e) {
+            var r = e.reason;
+            reportError('Unhandled rejection: ' + (r && r.message ? r.message : String(r)));
+        });
+
+        // announce ourselves; the tablet answers with `init`
+        post('hello', { sdk: SDK_VERSION });
+    }
 })(window);

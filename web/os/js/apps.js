@@ -14,6 +14,29 @@ import { h } from './util.js';
 const TAG = 1;
 const ANIM_MS = 260;
 
+// Hard limits. Everything an app or the host sends is bounded (see docs/HARDENING.md).
+export const LIMITS = {
+    maxApps: 200,
+    maxInflight: 16,              // concurrent requests per app that reach the integration
+    maxQueuedRequests: 64,        // waiting behind those; beyond this requests fail fast
+    maxRequestBytes: 256 * 1024,  // JSON size of request data
+    maxQueuedMessages: 200,       // host → app messages held until the app's SDK is ready
+    notifyBurst: 10,              // notifications an app may send at once…
+    notifyRefillMs: 2000,         // …then one per this many ms
+    maxErrorsPerMinute: 10,       // app errors written to the journal
+};
+
+const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
+const COLOR_RE = /^(#[0-9a-f]{3,8}|(rgb|hsl)a?\([0-9.,%\s/deg]+\)|[a-z]{3,20})$/i;
+
+/** Only http(s)/nui pages (or paths relative to the OS). Never javascript:, data:, blob:, about:. */
+function safeAppUrl(raw) {
+    if (typeof raw !== 'string' || !raw.trim() || raw.length > 2048) return null;
+    let u;
+    try { u = new URL(raw.trim(), location.href); } catch { return null; }
+    return ['http:', 'https:', 'nui:'].includes(u.protocol) ? u.href : null;
+}
+
 const registry = new Map();   // id → app descriptor
 const running = new Map();    // id → runtime record
 let foreground = null;        // id of the foreground app (may be suspended while locked/asleep)
@@ -22,16 +45,19 @@ let pendingLaunch = null;     // launch requested while suspended, performed on 
 let layer = null;
 
 function normalize(input) {
-    if (!input || typeof input !== 'object') throw new Error('app must be an object');
-    const id = String(input.id ?? '').trim();
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('app must be an object');
+    const id = typeof input.id === 'string' ? input.id.trim() : '';
     if (!id) throw new Error('app.id is required');
-    if (!input.system && (typeof input.url !== 'string' || !input.url.trim())) throw new Error(`app "${id}" needs a url`);
+    if (!ID_RE.test(id)) throw new Error(`app id "${id.slice(0, 80)}" is invalid (letters, digits and . _ : - only, max 64)`);
+    const url = input.system ? null : safeAppUrl(input.url);
+    if (!input.system && !url) throw new Error(`app "${id}" needs an http(s):// or nui:// url`);
+    const label = String(input.label ?? id).replace(/[\u0000-\u001f]/g, '').trim().slice(0, 40) || id;
     return {
         id,
-        label: String(input.label ?? id).slice(0, 40),
-        icon: typeof input.icon === 'string' ? input.icon : null,
-        color: typeof input.color === 'string' ? input.color : null,
-        url: input.system ? null : input.url.trim(),
+        label,
+        icon: typeof input.icon === 'string' && input.icon.length <= 64 * 1024 ? input.icon : null,
+        color: typeof input.color === 'string' && COLOR_RE.test(input.color.trim()) ? input.color.trim() : null,
+        url,
         order: Number.isFinite(Number(input.order)) ? Number(input.order) : 100,
         hidden: !!input.hidden,
         keepAlive: input.keepAlive !== false,
@@ -63,7 +89,12 @@ function deliver(r, type, payload) {
     if (r.app.system) return;
     if (!r.ready) {
         // show/hide are covered by `visible` in the init message
-        if (type !== 'show' && type !== 'hide') r.queue.push([type, payload]);
+        if (type === 'show' || type === 'hide') return;
+        if (r.queue.length >= LIMITS.maxQueuedMessages) {
+            r.queue.shift();
+            if (!r.queueWarned) { r.queueWarned = true; log.warn('apps', `${r.app.id}: not ready, dropping oldest queued messages`); }
+        }
+        r.queue.push([type, payload]);
         return;
     }
     post(r, type, payload);
@@ -88,7 +119,13 @@ function headerbar(app) {
 function spawn(app, launchData) {
     const body = h('div', { class: 'app-body' });
     const frame = h('section', { class: 'app-frame', 'data-app': app.id }, headerbar(app), body);
-    const r = { app, frame, body, iframe: null, ctl: null, ready: false, queue: [], lastUsed: Date.now(), launchData };
+    const r = {
+        app, frame, body, iframe: null, ctl: null, ready: false, queue: [], lastUsed: Date.now(), launchData,
+        inflight: 0, requests: [],                                   // request limiter
+        tokens: LIMITS.notifyBurst, tokensAt: Date.now(),            // notification rate limit
+        errors: 0, errorsAt: Date.now(),                             // error-report rate limit
+        sdk: 0, editable: false, lastPong: 0,                        // heartbeat + input focus
+    };
 
     if (app.system) {
         r.ctl = app.render?.(body, { home: () => Apps.home(), close: () => Apps.close(app.id) }) || {};
@@ -156,11 +193,60 @@ function evictBackgroundApps() {
     }
 }
 
+/** One request to the integration. Always settles: answer, transport error or OS timeout. */
+function startRequest(r, msg) {
+    const id = r.app.id;
+    r.inflight++;
+    let settled = false;
+    const finish = (payload) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        r.inflight--;
+        // the app may have been closed (or restarted) meanwhile: then the answer is dropped
+        if (running.get(id) === r) post(r, 'response', { rid: msg.rid, ...payload });
+        while (r.inflight < LIMITS.maxInflight && r.requests.length) startRequest(r, r.requests.shift());
+    };
+    const timer = setTimeout(() => {
+        log.warn('apps', `${id} request ${msg.action} timed out after ${state.requestTimeout} ms (the integration never answered)`);
+        finish({ ok: false, error: 'Request timed out' });
+    }, state.requestTimeout);
+
+    log.debug('apps', `${id} → request ${msg.action}`);
+    Bridge.call('app:request', { id, action: msg.action, data: msg.data ?? null })
+        .then((res) => {
+            // Integration may answer `{ ok, data }` / `{ ok: false, error }`, or just the data.
+            if (res && typeof res === 'object' && typeof res.ok === 'boolean') {
+                finish(res.ok
+                    ? { ok: true, data: res.data ?? null }
+                    : { ok: false, error: String(res.error ?? 'Request failed').slice(0, 500) });
+            } else {
+                finish({ ok: true, data: res ?? null });
+            }
+        })
+        .catch((err) => {
+            log.warn('apps', `${id} request ${msg.action} failed: ${err?.message}`);
+            finish({ ok: false, error: err?.message || 'Request failed' });
+        });
+}
+
+function takeToken(r) {
+    const now = Date.now();
+    r.tokens = Math.min(LIMITS.notifyBurst, r.tokens + (now - r.tokensAt) / LIMITS.notifyRefillMs);
+    r.tokensAt = now;
+    if (r.tokens < 1) return false;
+    r.tokens -= 1;
+    return true;
+}
+
 function handleAppMessage(r, msg) {
     const id = r.app.id;
     switch (msg.type) {
         case 'hello': {
             r.ready = true;
+            r.sdk = parseInt(msg.sdk, 10) || 1;
+            r.lastPong = Date.now();
+            r.editable = false;
             clearTimeout(r.readyTimer);
             post(r, 'init', {
                 appId: id,
@@ -174,28 +260,26 @@ function handleAppMessage(r, msg) {
             break;
         }
         case 'request': {
-            const rid = msg.rid;
-            const reply = (payload) => post(r, 'response', { rid, ...payload });
-            if (typeof msg.action !== 'string' || !msg.action) {
-                reply({ ok: false, error: 'action must be a non-empty string' });
+            if (typeof msg.action !== 'string' || !msg.action || msg.action.length > 128) {
+                post(r, 'response', { rid: msg.rid, ok: false, error: 'action must be a string of 1–128 characters' });
                 break;
             }
-            log.debug('apps', `${id} → request ${msg.action}`);
-            Bridge.call('app:request', { id, action: msg.action, data: msg.data ?? null })
-                .then((res) => {
-                    // Integration may answer `{ ok, data }` / `{ ok: false, error }`, or just the data.
-                    if (res && typeof res === 'object' && typeof res.ok === 'boolean') {
-                        reply(res.ok
-                            ? { ok: true, data: res.data ?? null }
-                            : { ok: false, error: String(res.error ?? 'Request failed') });
-                    } else {
-                        reply({ ok: true, data: res ?? null });
-                    }
-                })
-                .catch((err) => {
-                    log.warn('apps', `${id} request ${msg.action} failed: ${err?.message}`);
-                    reply({ ok: false, error: err?.message || 'Request failed' });
-                });
+            let size = 0;
+            try { size = JSON.stringify(msg.data ?? null).length; } catch { size = Infinity; }
+            if (size > LIMITS.maxRequestBytes) {
+                log.warn('apps', `${id} request ${msg.action} rejected: ${Math.round(size / 1024)} KB payload`);
+                post(r, 'response', { rid: msg.rid, ok: false, error: `Request too large (max ${LIMITS.maxRequestBytes / 1024} KB)` });
+                break;
+            }
+            if (r.inflight >= LIMITS.maxInflight) {
+                if (r.requests.length >= LIMITS.maxQueuedRequests) {
+                    post(r, 'response', { rid: msg.rid, ok: false, error: 'Too many pending requests' });
+                    break;
+                }
+                r.requests.push(msg);
+                break;
+            }
+            startRequest(r, msg);
             break;
         }
         case 'home':
@@ -205,11 +289,38 @@ function handleAppMessage(r, msg) {
             Apps.close(id);
             break;
         case 'launch':
-            if (typeof msg.id === 'string' && registry.has(msg.id)) Apps.launch(msg.id, msg.data);
-            else log.warn('apps', `${id} tried to launch unknown app "${msg.id}"`);
+            // only the app on screen may switch apps; a background app can't steal focus
+            if (!isVisible(id)) log.warn('apps', `${id} tried to launch "${String(msg.id).slice(0, 64)}" from the background (blocked)`);
+            else if (typeof msg.id === 'string' && registry.has(msg.id)) Apps.launch(msg.id, msg.data);
+            else log.warn('apps', `${id} tried to launch unknown app "${String(msg.id).slice(0, 64)}"`);
             break;
         case 'notify':
+            if (!takeToken(r)) {
+                if (!r.notifyWarned || Date.now() - r.notifyWarned > 10000) {
+                    r.notifyWarned = Date.now();
+                    log.warn('notify', `${id} is sending notifications too fast; dropping some`);
+                }
+                break;
+            }
             emit('app:notify', { appId: id, title: msg.title, body: msg.body, data: msg.data });
+            break;
+        case 'error': {
+            // uncaught errors inside the app page, reported by the SDK
+            const now = Date.now();
+            if (now - r.errorsAt > 60000) { r.errors = 0; r.errorsAt = now; }
+            if (++r.errors <= LIMITS.maxErrorsPerMinute) {
+                const where = msg.source ? ` (${String(msg.source).split('/').pop().slice(0, 80)}:${parseInt(msg.line, 10) || 0})` : '';
+                log.error(id, `App error: ${String(msg.message ?? 'unknown').slice(0, 300)}${where}`);
+            }
+            break;
+        }
+        case 'pong':
+            r.lastPong = Date.now();
+            emit('app:pong', id);
+            break;
+        case 'focus':
+            r.editable = !!msg.editable;
+            emit('input-focus');
             break;
         case 'storage': {
             let reply;
@@ -258,6 +369,7 @@ export const Apps = {
         const app = normalize({ ...input, system, bundled });
         const prev = registry.get(app.id);
         if (prev?.system && !system) throw new Error(`"${app.id}" is a system app id`);
+        if (!prev && registry.size >= LIMITS.maxApps) throw new Error(`app limit reached (${LIMITS.maxApps}); "${app.id}" not registered`);
         registry.set(app.id, app);
 
         const r = running.get(app.id);
@@ -364,7 +476,8 @@ export const Apps = {
         else if (data !== undefined) {
             r.launchData = data;
             if (r.app.system) r.ctl.launch?.(data);
-            else deliver(r, 'launch', { data });
+            // not ready yet: the init message will carry the latest launch data exactly once
+            else if (r.ready) post(r, 'launch', { data });
         }
 
         const wasVisible = isVisible(id);
@@ -399,6 +512,7 @@ export const Apps = {
         if (!r) return;
         running.delete(id);
         clearTimeout(r.readyTimer);
+        r.requests.length = 0;     // queued requests die with the app; in-flight answers are dropped
         if (foreground === id) {
             foreground = null;
             setState({ view: 'home' });
@@ -470,4 +584,22 @@ export const Apps = {
     },
 
     isMuted(id) { return settings.mutedApps.includes(id); },
+
+    /* ---------- used by the watchdog ---------- */
+
+    /** Runtime record of the app on screen (awake, unlocked, no overlay), else null. */
+    visibleRecord() {
+        return foreground && isVisible(foreground) && !state.overlay ? running.get(foreground) || null : null;
+    },
+    foregroundRecord() { return foreground ? running.get(foreground) || null : null; },
+    ping(r) { post(r, 'ping', {}); },
+    get suspended() { return suspended; },
+
+    /** Everything back to a clean slate (character switch). */
+    resetRuntime() {
+        pendingLaunch = null;
+        Apps.closeAll();
+        for (const app of registry.values()) app.badge = 0;
+        emit('apps');
+    },
 };

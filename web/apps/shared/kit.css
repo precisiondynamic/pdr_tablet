@@ -53,6 +53,8 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+/* the SDK marks the page hidden while it's off screen: stop animations burning GPU time */
+[data-tablet-visible="false"] *, [data-tablet-visible="false"] *::before, [data-tablet-visible="false"] *::after { animation-play-state: paused !important; }
 html, body { height: 100%; overflow: hidden; }
 body {
     background: var(--window-bg);

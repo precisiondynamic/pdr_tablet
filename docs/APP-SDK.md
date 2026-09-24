@@ -127,6 +127,21 @@ tablet.launch('pdr_boosting', { contractId: 12 }); // open another installed app
 `web/apps/shared/kit.css` and `kit.js` are the small libadwaita-style kit those apps use.
 Copy it if you like; it isn't part of the SDK contract.
 
+## What the tablet enforces
+
+| | |
+|---|---|
+| `request()` | 16 in flight + 64 queued per app, 256 KB payload. The OS answers `Request timed out` if the server never replies. |
+| `notify()` | 10 at once, then 1 per 2 s; `data` ≤ 4 KB |
+| `launch()` | only works while your app is **on screen**, so a background app can't steal focus |
+| `storage` | 512 KB per app; `__proto__` is reserved |
+| Heartbeat | the SDK answers pings automatically. If your page stops responding for 15 s while on screen, the user is offered Force Quit. |
+| Errors | uncaught errors and rejections in your page are reported to Settings › System Log |
+| Focus | the SDK tells the tablet when a text field is focused, so keys are only captured while typing |
+
+The SDK sets `<html data-tablet-visible="true|false">`. Use it to pause expensive CSS while
+hidden (the app kit already pauses all animations).
+
 ## Guidelines
 
 * **Save on `hide`.** A backgrounded app can be evicted without further warning, so flush

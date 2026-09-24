@@ -29,7 +29,8 @@ String payloads are parsed automatically, so both `SendDuiMessage` and `SendNUIM
 
 | action | payload | effect |
 |---|---|---|
-| `os:init` | `{ settings?, apps?, status?, osName?, deviceName?, maxBackgroundApps?, appStorage?, bundledApps?, devApps? }` | One-shot setup after `os:ready`. Every field is optional. `appStorage` is `{ [appId]: data }` (see [App storage](#app-storage)). `bundledApps: false` removes the bundled reference apps. `devApps: true` shows developer apps (the SDK Demo) in-game. |
+| `os:init` | `{ settings?, apps?, status?, osName?, deviceName?, maxBackgroundApps?, appStorage?, bundledApps?, devApps?, storageMode?, requestTimeout?, heartbeat? }` | Setup after **every** `os:ready`. Every field is optional. `appStorage` is `{ [appId]: data }` (see [App storage](#app-storage)). `bundledApps: false` removes the bundled reference apps. `devApps: true` shows developer apps (the SDK Demo) in-game. `storageMode: 'host'` keeps settings and app data in memory only (recommended on multi-character servers). `requestTimeout` is in ms (1000–120000, default 30000). `heartbeat` is `{ interval, timeout }` in ms (defaults 5000 / 15000). |
+| `os:session` | `{ settings?, appStorage?, deviceName? }` | **Character switch / logout.** Closes every app, clears notifications and badges, wipes app data and local caches, *replaces* settings, seeds `appStorage`, and locks. Answers with `os:sessionReady`. |
 | `os:wake` | – | Tablet taken out. The first wake of a session runs the boot screen (`bootStyle`: a systemd-style log of the real startup journal, a splash, or nothing), then the lock screen if it's enabled. |
 | `os:sleep` | – | Tablet put away. The screen goes black, the foreground app gets `hide`, and it locks if the lock screen is enabled. |
 | `os:lock` | – | Show the lock screen. |
@@ -98,6 +99,8 @@ each event you care about. `app:request` is the only one whose response is used.
 | `os:awake` / `os:asleep` | `{}` | Echo of wake/sleep. |
 | `os:unlocked` | `{}` | The user unlocked. |
 | `os:requestClose` | `{}` | The user pressed the power button in the Control Center. Put the tablet away (then send `os:sleep`). |
+| `os:sessionReady` | `{}` | `os:session` finished. |
+| `input:focus` | `{ editable }` | A text field in the OS or the app on screen gained (`true`) or lost (`false`) focus. Capture the keyboard only while `editable` is true. It's always sent as `false` when the field, app or tablet goes away. |
 | `os:settingsChanged` | `{ settings, changed: string[] }` | Persist it (e.g. `SetResourceKvp`) and send it back via `os:init`/`os:settings` next session. |
 | `app:lifecycle` | `{ id, state, data? }` | `state` is one of `launched`, `ready`, `foreground`, `background`, `closed`. Route it to the owning resource's hooks. |
 | `app:storage` | `{ id, key, value }` or `{ id, cleared: true }` | An app wrote to `tablet.storage` (`value: null` means the key was removed). Persist it and hand it back with `os:init { appStorage }` / `apps:storage`. |
@@ -147,6 +150,12 @@ them, or `devApps = true` to also show the SDK Demo in-game. See [`web/apps/READ
 Apps served from the OS's own origin (all bundled apps) run in an **opaque-origin** sandbox, so
 they can't reach into the OS page, and they have no `localStorage` of their own; they use
 `tablet.storage`. Apps from other resources keep their own origin.
+
+## Limits and failure behaviour
+
+Everything an app or the host sends is bounded: request concurrency, payload sizes,
+notification rate, queue lengths, storage quota. Hung apps are detected by a heartbeat. See
+[HARDENING.md](HARDENING.md) for the full table and the integration checklist.
 
 ## Lifecycle
 

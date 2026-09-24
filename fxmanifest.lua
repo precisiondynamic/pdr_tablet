@@ -3,10 +3,13 @@ game 'gta5'
 
 name 'pdr_tablet'
 description 'PDR Tablet - tablet OS and app platform'
-version '1.3.0'
+version '1.4.0'
 
 -- UI layer only. The prop / DUI / input integration adds its client scripts here.
 -- The OS page is loaded via nui://pdr_tablet/web/os/index.html (see docs/PROTOCOL.md).
+
+-- server helpers for app resources:  server_script '@pdr_tablet/lib/validate.lua' (etc.)
+-- lib/validate.lua, lib/guard.lua, lib/lsx_market.lua
 
 files {
     'web/os/index.html',

@@ -2,7 +2,7 @@ import { Bridge } from './bridge.js';
 import { log } from './log.js';
 import { Emitter, clamp } from './util.js';
 
-export const VERSION = '1.3.0';
+export const VERSION = '1.4.0';
 const STORAGE_KEY = 'pdr_tablet:settings';
 
 // GNOME accent colours
@@ -91,6 +91,10 @@ export const state = {
     version: VERSION,
     deviceName: null,
     maxBackgroundApps: 4,
+    requestTimeout: 30000,      // OS-side cap on app:request round-trips
+    heartbeatInterval: 5000,    // ping the foreground app this often…
+    heartbeatTimeout: 15000,    // …and call it "not responding" after this long without a pong
+    storageMode: 'local',       // 'local': cache settings + app data in localStorage; 'host': memory only
     status: { battery: null, charging: false, signal: null, network: null },
 };
 
@@ -111,13 +115,28 @@ export function updateSettings(patch, { fromHost = false } = {}) {
     const changed = Object.keys(next).filter((k) => JSON.stringify(next[k]) !== JSON.stringify(settings[k]));
     if (!changed.length) return;
     Object.assign(settings, next);
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(settings)); } catch { /* storage unavailable */ }
+    if (state.storageMode === 'local') {
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(settings)); } catch { /* storage unavailable */ }
+    }
     if (!fromHost) Bridge.emit('os:settingsChanged', { settings: { ...settings }, changed });
     // sliders fire on every tick; keep them out of the journal
     if (!(changed.length === 1 && SLIDER_KEYS.includes(changed[0]))) {
         log.debug('settings', `${fromHost ? 'Applied from host' : 'Changed'}: ${changed.join(', ')}`);
     }
     bus.emit('settings', changed);
+}
+
+/** 'host' = the integration is the only store: forget the local cache (shared by every character on this PC). */
+export function setStorageMode(mode) {
+    state.storageMode = mode === 'host' ? 'host' : 'local';
+    if (state.storageMode === 'host') {
+        try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+    }
+}
+
+/** Replace all settings (not merge): used when switching character. */
+export function replaceSettings(next) {
+    updateSettings({ ...DEFAULT_SETTINGS, dock: [...DEFAULT_SETTINGS.dock], mutedApps: [], ...(next && typeof next === 'object' ? next : {}) }, { fromHost: true });
 }
 
 export function resetSettings() {

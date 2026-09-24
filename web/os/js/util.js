@@ -39,6 +39,21 @@ export function slider({ min = 0, max = 100, value = 0, onInput, ...rest }) {
     return input;
 }
 
+/**
+ * Run `fn` at most once per frame no matter how often it's requested (e.g. 200 apps registered
+ * in a burst → one grid render). Falls back to a timer when frames aren't being produced.
+ */
+export function coalesce(fn) {
+    let pending = false;
+    const run = () => { if (!pending) return; pending = false; fn(); };
+    return () => {
+        if (pending) return;
+        pending = true;
+        requestAnimationFrame(run);
+        setTimeout(run, 100);
+    };
+}
+
 export class Emitter {
     #map = new Map();
     on(event, fn) {
@@ -93,7 +108,19 @@ export function relativeTime(ts) {
  * Pointer drag helper. Works with mouse events forwarded into a DUI as well as real input.
  * Callbacks receive (dx, dy, event). onEnd also gets the gesture duration in ms.
  */
-export function drag(el, { onStart, onMove, onEnd, threshold = 4 } = {}) {
+const activeGestures = new Set();   // cancel fns of drags / long-presses in progress
+
+/**
+ * Abort every gesture in progress (the tablet was put away or locked mid-drag). Without this,
+ * a pointerup that never arrived would leave the drag "held" and the next mouse move after
+ * waking would continue it.
+ */
+export function cancelGestures() {
+    for (const cancel of [...activeGestures]) cancel();
+    activeGestures.clear();
+}
+
+export function drag(el, { onStart, onMove, onEnd, onCancel, threshold = 4 } = {}) {
     el.addEventListener('pointerdown', (e) => {
         if (e.button !== 0) return;
         const sx = e.clientX, sy = e.clientY, t0 = performance.now();
@@ -107,12 +134,21 @@ export function drag(el, { onStart, onMove, onEnd, threshold = 4 } = {}) {
             }
             onMove?.(dx, dy, ev);
         };
-        const up = (ev) => {
+        const detach = () => {
             window.removeEventListener('pointermove', move);
             window.removeEventListener('pointerup', up);
             window.removeEventListener('pointercancel', up);
+            activeGestures.delete(cancel);
+        };
+        const up = (ev) => {
+            detach();
             onEnd?.(ev.clientX - sx, ev.clientY - sy, ev, performance.now() - t0, active);
         };
+        const cancel = () => {
+            detach();
+            onCancel?.();
+        };
+        activeGestures.add(cancel);
         window.addEventListener('pointermove', move);
         window.addEventListener('pointerup', up);
         window.addEventListener('pointercancel', up);
@@ -122,11 +158,13 @@ export function drag(el, { onStart, onMove, onEnd, threshold = 4 } = {}) {
 /** Long-press (touch-style) → callback. Suppresses the click that follows. */
 export function longPress(el, fn, ms = 550) {
     let timer = null, fired = false, sx = 0, sy = 0;
-    const cancel = () => { clearTimeout(timer); timer = null; };
+    const cancel = () => { clearTimeout(timer); timer = null; activeGestures.delete(cancel); };
     el.addEventListener('pointerdown', (e) => {
         if (e.button !== 0) return;
         fired = false; sx = e.clientX; sy = e.clientY;
-        timer = setTimeout(() => { fired = true; fn(e); }, ms);
+        clearTimeout(timer);
+        timer = setTimeout(() => { activeGestures.delete(cancel); fired = true; fn(e); }, ms);
+        activeGestures.add(cancel);
     });
     el.addEventListener('pointermove', (e) => {
         if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 8) cancel();

@@ -40,6 +40,9 @@ web/
 docs/
   PROTOCOL.md     contract between the OS and the Lua integration
   APP-SDK.md      how another resource builds a tablet app
+  HARDENING.md    guarantees, limits, integration checklist, server validation
+lib/              server helpers (Lua 5.4): validate.lua, guard.lua, lsx_market.lua
+tests/            run.sh + browser suites (e2e/) + Lua tests (lua/)
 ```
 
 ## Preview in a browser
@@ -52,6 +55,16 @@ python3 -m http.server -d web 8080
 The harness simulates the integration: wake/sleep/lock, status, registering test apps,
 launching, messages, badges and notifications, with a live log of every event the OS emits.
 `web/os/index.html` opened on its own also works and wakes itself up.
+
+## Tests
+
+```sh
+tests/run.sh           # all suites: Lua libs, market parity, OS, settings, apps, adversarial
+```
+
+Needs node, lua5.4 and Playwright + Chromium. `tests/e2e/murder.js` is the adversarial suite:
+hostile apps, request floods, deep-link races, storage corruption, character switches, stuck
+input, restarts and fuzzing. See [docs/HARDENING.md](docs/HARDENING.md).
 
 ## Integration
 

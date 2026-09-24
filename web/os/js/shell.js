@@ -11,7 +11,7 @@ import { Notifications, notificationCard } from './notifications.js';
 import { state, settings, on, setState, UI_SCALES } from './store.js';
 import { icon } from './icons.js';
 import { wallpaperCss } from './wallpapers.js';
-import { h, fill, drag, formatDate, formatTime, timeParts, hexToRgb, clamp } from './util.js';
+import { h, fill, drag, cancelGestures, formatDate, formatTime, timeParts, hexToRgb, clamp } from './util.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -144,12 +144,21 @@ function buildLock() {
     lockEl.append(lockInner);
 
     let dragged = false;
+    let swallowClick = false;   // the stray pointerup of a gesture cancelled by sleep/lock
+    lockEl.addEventListener('pointerdown', () => { swallowClick = false; });
     drag(lockEl, {
         onStart: () => { dragged = true; lockEl.classList.add('is-dragging'); },
         onMove: (dx, dy) => {
             const y = Math.min(0, dy);
             lockInner.style.transform = `translateY(${y}px)`;
             lockInner.style.opacity = String(1 + y / (lockEl.clientHeight * 0.6));
+        },
+        onCancel: () => {
+            lockEl.classList.remove('is-dragging');
+            lockInner.style.transform = '';
+            lockInner.style.opacity = '';
+            dragged = false;
+            swallowClick = true;
         },
         onEnd: (dx, dy, e, ms) => {
             lockEl.classList.remove('is-dragging');
@@ -162,6 +171,7 @@ function buildLock() {
         },
     });
     lockEl.addEventListener('click', (e) => {
+        if (swallowClick) { swallowClick = false; return; }
         if (dragged || e.target.closest('.notif')) return;
         Shell.unlock();
     });
@@ -187,6 +197,7 @@ function buildHomeBar() {
     drag(bar, {
         threshold: 6,
         onMove: (dx, dy) => bar.style.setProperty('--pull', `${Math.max(-40, Math.min(0, dy))}px`),
+        onCancel: () => bar.style.removeProperty('--pull'),
         onEnd: (dx, dy, e, ms, moved) => {
             bar.style.removeProperty('--pull');
             if (state.locked || !state.awake) return;
@@ -309,6 +320,7 @@ export const Shell = {
     /** Tablet put away. */
     sleep() {
         if (!state.awake) return;
+        cancelGestures();
         Shell.closeOverlays();
         Dialog.dismiss();
         Apps.suspend();
@@ -319,6 +331,7 @@ export const Shell = {
     },
 
     lock() {
+        cancelGestures();
         Shell.closeOverlays();
         Dialog.dismiss();
         Apps.suspend();

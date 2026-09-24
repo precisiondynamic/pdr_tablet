@@ -6,7 +6,7 @@ import { Menu } from './menu.js';
 import { Shell } from './shell.js';
 import { settings, on } from './store.js';
 import { appTile, icon } from './icons.js';
-import { h, fill, longPress } from './util.js';
+import { h, fill, longPress, coalesce } from './util.js';
 
 const MAX_DASH_RECENTS = 3;
 let grid, dash, search;
@@ -130,9 +130,11 @@ export const Home = {
         renderGrid();
         renderDash();
 
-        on('apps', () => { renderGrid(); renderDash(); });
-        on('running', renderDash);
-        on('settings', (changed) => { if (changed.includes('dock')) renderDash(); });
+        const gridSoon = coalesce(renderGrid);
+        const dashSoon = coalesce(renderDash);
+        on('apps', () => { gridSoon(); dashSoon(); });
+        on('running', dashSoon);
+        on('settings', (changed) => { if (changed.includes('dock')) dashSoon(); });
         log.ok('home', 'Started App Launcher.');
     },
 };
