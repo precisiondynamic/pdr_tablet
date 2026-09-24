@@ -248,13 +248,22 @@
             img.src = o.url; img.alt = ''; img.referrerPolicy = 'no-referrer';
             wrap.appendChild(img);
         } else {
-            var shape = SHAPES[o.shape] ? o.shape : 'sedan';
-            var wheels = WHEELS[shape];
-            var body = svg('g', { class: 'ph-car' }, [
-                svg('path', { d: SHAPES[shape] }),
-                svg('circle', { cx: wheels[0], cy: 60, r: 11 }),
-                svg('circle', { cx: wheels[1], cy: 60, r: 11 }),
-            ]);
+            var body;
+            if (o.shape === 'person') {
+                // head-and-shoulders, three-quarter turn
+                body = svg('g', { class: 'ph-car' }, [
+                    svg('ellipse', { cx: 104, cy: 18, rx: 15, ry: 18 }),
+                    svg('path', { d: 'M62 82 Q64 50 90 42 L104 50 L118 42 Q146 50 148 82 Z' }),
+                ]);
+            } else {
+                var shape = SHAPES[o.shape] ? o.shape : 'sedan';
+                var wheels = WHEELS[shape];
+                body = svg('g', { class: 'ph-car' }, [
+                    svg('path', { d: SHAPES[shape] }),
+                    svg('circle', { cx: wheels[0], cy: 60, r: 11 }),
+                    svg('circle', { cx: wheels[1], cy: 60, r: 11 }),
+                ]);
+            }
             var scene = svg('svg', { viewBox: o.kind === 'crop' ? '70 0 130 80' : '-40 -30 280 130', preserveAspectRatio: 'xMidYMid slice' }, [
                 svg('defs', {}, [
                     svg('filter', { id: 'ph-blur' }, [svg('feGaussianBlur', { stdDeviation: o.kind === 'silhouette' ? 2.2 : 1.1 })]),

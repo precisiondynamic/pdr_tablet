@@ -290,41 +290,123 @@
     /* shell + routing                                                     */
     /* ================================================================== */
 
-    var NAV = [['home', 'Home'], ['contracts', 'Contracts'], ['map', 'Map'], ['comms', 'Comms'], ['crew', 'Crew'], ['operations', 'Operations'], ['profile', 'Profile']];
+    /** Services the network offers this player. A server that sends none gets one generic feed. */
+    function services(s) {
+        if (!s) return [];
+        var list = Array.isArray(s.services) && s.services.length ? s.services : [{ id: 'boosting', name: 'CONTRACTS', blurb: '', standing: s.standing }];
+        list.forEach(function (x) { x.available = availableFor(s, x.id); });
+        return list;
+    }
+    function availableFor(s, id) {
+        return s.contracts.filter(function (c) { return (c.service || 'boosting') === id; }).length + (s.offer && (s.offer.service || 'boosting') === id ? 1 : 0);
+    }
+    function service(id) { return services(S).filter(function (x) { return x.id === id; })[0] || null; }
+    function firstService() { var l = services(S).filter(function (x) { return !x.locked; }); return l.length ? l[0].id : null; }
 
     function shell() {
         fill(app,
-            h('aside', { class: 'rail' },
-                h('div', { class: 'mark' }, h('span', { class: 'mark-glyph', html: MARK }), h('span', { class: 'mark-name' }, 'NETWORK')),
-                h('nav', { class: 'nav', id: 'nav' }),
-                h('div', { class: 'rail-foot' },
-                    bound('div', 'rail-id', function (s) { return s.player ? s.player.tag + ' · ' + s.player.handle.toUpperCase() : '—'; }),
-                    h('div', { class: 'rail-sess mono' }, 'SESSION ' + session))),
-            h('div', { class: 'stage' },
-                h('header', { class: 'top' },
-                    h('div', { class: 'crumb', id: 'crumb' }),
-                    h('div', { class: 'conn is-' + conn }, h('i'), CONN[conn])),
-                h('main', { class: 'main', id: 'main' })));
+            h('header', { class: 'term-top' },
+                h('div', { class: 'term-brand' }, h('span', { class: 'mark-glyph', html: MARK }), h('span', { class: 'mark-name' }, 'NETWORK'),
+                    h('span', { class: 'term-node mono' }, 'NODE ' + session), h('span', { class: 'term-sec mono' }, '▸ TLS/1.3 · AES-256-GCM')),
+                h('div', { class: 'term-right' },
+                    bound('span', 'term-user mono', function (s) { return s.player ? s.player.tag + '@' + s.player.handle.toLowerCase() : '—'; }),
+                    h('div', { class: 'conn is-' + conn }, h('i'), CONN[conn]))),
+            h('nav', { class: 'term-tabs', id: 'nav' }),
+            h('div', { class: 'term-prompt mono', id: 'prompt' }),
+            h('main', { class: 'main', id: 'main' }),
+            h('div', { class: 'term-fx' }));
         binds = [];
+    }
+
+    function navItems() {
+        var items = [['home', 'HUB', 0]];
+        services(S).forEach(function (x) { items.push(['svc-' + x.id, x.name, x.locked ? 0 : x.available || 0, x.locked]); });
+        if (S.operation) items.push(['operation', 'OP://' + S.operation.contract.code, 0, false, 'live']);
+        else if (S.lobby) items.push(['lobby', 'CREW://' + S.lobby.contract.code, 0, false, 'live']);
+        items.push(['comms', 'COMMS', unreadTotal(S)], ['crew', 'CREW', S.invites.length], ['map', 'MAP', 0], ['profile', 'PROFILE', 0]);
+        return items;
     }
 
     function renderNav() {
         var nav = document.getElementById('nav');
         if (!nav) return;
-        var active = NAV_OF[route.view] || route.view;
-        fill(nav, NAV.map(function (n) {
-            var count = n[0] === 'crew' ? S.invites.length : n[0] === 'contracts' ? S.contracts.filter(function (c) { return c.fresh; }).length + (S.offer ? 1 : 0) : n[0] === 'comms' ? unreadTotal(S) : 0;
-            var live = (n[0] === 'operations' && S.operation) || (n[0] === 'crew' && S.lobby);
-            return h('button', { class: 'nav-row' + (active === n[0] ? ' is-active' : ''), 'data-nav': n[0], onClick: function () { go(n[0]); } },
-                glyph(n[0]), h('span', null, n[1]),
-                live ? h('i', { class: 'nav-live' }) : null,
-                count ? h('b', { class: 'nav-count' }, String(count)) : null);
+        var active = activeNav();
+        fill(nav, navItems().map(function (n, i) {
+            return h('button', { class: 'nav-row' + (active === n[0] ? ' is-active' : '') + (n[3] ? ' is-locked' : '') + (n[4] ? ' is-live' : ''), 'data-nav': n[0], onClick: function () { navTo(n[0]); } },
+                h('span', { class: 'nav-idx' }, pad(i + 1)),
+                n[4] ? h('i', { class: 'nav-live' }) : null,
+                h('span', null, n[1]),
+                n[3] ? glyph('lock') : null,
+                n[2] ? h('b', { class: 'nav-count' }, String(n[2])) : null);
         }));
     }
-    var NAV_OF = { dossier: 'contracts', lobby: 'crew', operation: 'operations', report: 'operations' };
+    function navTo(key) {
+        if (key.indexOf('svc-') === 0) go('service', key.slice(4));
+        else go(key);
+    }
+    function activeNav() {
+        var v = route.view;
+        if (v === 'service') return 'svc-' + route.id;
+        if (v === 'dossier') { var c = findContract(route.id); return c ? 'svc-' + (c.service || 'boosting') : 'home'; }
+        if (v === 'contracts') return 'svc-' + (firstService() || '');
+        if (v === 'report' || v === 'operations') return 'profile';
+        return v;
+    }
+
+    var PROMPTS = {
+        home: function () { return ['~', 'ls /services --available']; },
+        service: function () { var x = service(route.id); return ['~/' + route.id, x && x.locked ? 'access ' + route.id + ' --request' : 'query contracts --tier<=' + ((x && x.standing && x.standing.tier) || 'D')]; },
+        dossier: function () { return ['~/contracts', 'cat ' + route.id + '.dossier']; },
+        lobby: function () { return ['~/crew', 'crew --assemble ' + (S.lobby ? S.lobby.contract.id : '')]; },
+        operation: function () { return ['~/ops', 'attach ' + (S.operation ? S.operation.contract.id : '') + ' --live']; },
+        comms: function () { var t = threads(S).filter(function (x) { return x.id === route.id; })[0]; return ['~/comms', 'comms --secure' + (t ? ' --open "' + t.title.toLowerCase() + '"' : '')]; },
+        crew: function () { return ['~/crew', 'crew --list ' + ui.crew]; },
+        map: function () { return ['~/geo', 'geo --overlay contracts']; },
+        profile: function () { return ['~', 'whoami --' + ui.profile]; },
+        report: function () { var r = findReport(route.id); return ['~/ops', 'cat ' + (r ? r.contractId : '') + '.report']; },
+        operations: function () { return ['~/ops', 'ls reports']; },
+    };
+    var promptTimer = null, lastPrompt = null;
+    function typePrompt(instant) {
+        var el = document.getElementById('prompt');
+        if (!el) return;
+        var p = (PROMPTS[viewKey()] || PROMPTS.home)();
+        if (p.join() === lastPrompt && el.childNodes.length) return;
+        lastPrompt = p.join();
+        var user = S && S.player ? S.player.handle.toLowerCase() : 'root';
+        var head = h('span', { class: 'p-user' }, user + '@network'), path = h('span', { class: 'p-path' }, ':' + p[0] + '$\u00a0');
+        var cmd = h('span', { class: 'p-cmd' });
+        fill(el, head, path, cmd, h('span', { class: 'p-cursor' }, '█'));
+        clearTimeout(promptTimer);
+        if (instant || !T.visible) { cmd.textContent = p[1]; return; }
+        var i = 0;
+        (function step() { cmd.textContent = p[1].slice(0, ++i); if (i < p[1].length) promptTimer = setTimeout(step, 9); })();
+    }
+
+    /** Text that decrypts into place when a screen opens. Only for static text (class .dx). */
+    var GLYPHSET = '!<>-_\\/[]{}=+*^?#%&01ABCDEF';
+    function decryptAll(root) {
+        if (!T.visible) return;
+        var els = root.querySelectorAll('.dx');
+        for (var i = 0; i < els.length && i < 24; i++) decrypt(els[i], i * 35);
+    }
+    function decrypt(el, delay) {
+        var final = el.textContent;
+        if (!final || final.length > 48) return;
+        var noise = function (n) { var o = ''; for (var i = n; i < final.length; i++) o += final[i] === ' ' ? ' ' : GLYPHSET[Math.floor(Math.random() * GLYPHSET.length)]; return o; };
+        el.textContent = noise(0);
+        setTimeout(function () {
+            var t0 = performance.now(), dur = 260 + final.length * 14;
+            (function step(t) {
+                var k = Math.min(1, (t - t0) / dur), n = Math.floor(k * final.length);
+                el.textContent = final.slice(0, n) + noise(n);
+                if (k < 1 && el.isConnected) requestAnimationFrame(step); else el.textContent = final;
+            })(t0);
+        }, delay);
+    }
 
     function go(view, id) {
-        if (view === 'crew' && S && S.lobby) view = 'lobby';
+        if (view === 'contracts') { id = (S && S.offer && S.offer.service) || (S && id) || firstService(); view = 'service'; }
         if (view === 'operations' && S && S.operation) view = 'operation';
         route = { view: view, id: id || null };
         if (view !== 'lobby') splitDraft = null;
@@ -332,10 +414,12 @@
         var m = document.getElementById('main'); if (m) m.scrollTop = 0;
     }
 
+    function viewKey() { var v = viewFor(); for (var k in VIEWS) if (VIEWS[k] === v) return k; return 'home'; }
     function viewFor() {
         var v = VIEWS[route.view];
         // routes whose subject disappeared fall back to something sensible
         if (route.view === 'lobby' && !S.lobby) return S.operation ? VIEWS.operation : VIEWS.crew;
+        if (route.view === 'service' && !service(route.id)) return VIEWS.home;
         if (route.view === 'operation' && !S.operation) return VIEWS.operations;
         if (route.view === 'dossier' && !findContract(route.id)) return VIEWS.contracts;
         if (route.view === 'report' && !findReport(route.id)) return VIEWS.operations;
@@ -350,11 +434,11 @@
         var v = viewFor();
         var main = document.getElementById('main');
         currentSig = v.sig(S);
-        fill(document.getElementById('crumb'), v.crumb ? v.crumb(S) : null);
         var node = v.build(S);
         fill(main, node);
-        if (!quiet) { node.classList.add('is-entering'); setTimeout(function () { node.classList.remove('is-entering'); }, 200); }
+        if (!quiet) { node.classList.add('is-entering'); setTimeout(function () { node.classList.remove('is-entering'); }, 220); decryptAll(node); }
         renderNav();
+        typePrompt(quiet);
     }
 
     function findContract(id) {
@@ -378,68 +462,144 @@
     /* ---------------- 01 home ---------------- */
 
     VIEWS.home = {
-        sig: function (s) { return ['home', !!s.operation && s.operation.id, !!s.lobby && s.lobby.id, !!s.result && s.result.id, s.invites.length, !!s.offer, s.contracts.map(function (c) { return c.id; }).join('.'), s.history.length, threads(s).length, s.standing.tier].join(); },
+        sig: function (s) { return ['hub', !!s.operation && s.operation.id, !!s.lobby && s.lobby.id, !!s.result && s.result.id, s.invites.length, !!s.offer, services(s).map(function (x) { return x.id + (x.available || 0) + (x.standing ? x.standing.tier : ''); }).join('.'), s.history.length, threads(s).length].join(); },
         build: function (s) {
-            var op = s.operation, st = s.standing, stats = s.stats || {};
-            var week = (stats.earnings || []).slice(-7);
-            var weekSum = week.reduce(function (a, d) { return a + d.v; }, 0);
-            var rate = stats.completed + stats.failed ? stats.completed / (stats.completed + stats.failed) : 0;
+            var op = s.operation, st = s.standing;
+            var hero = h('section', { class: 'hub-head' },
+                h('div', { class: 'hub-hello' },
+                    h('div', { class: 'term-line mono' }, h('span', { class: 'ok' }, '[ OK ]'), ' secure session established · ', h('span', { class: 'dim' }, new Date().toUTCString().slice(17, 25) + ' UTC')),
+                    h('h1', { class: 'dx' }, greeting().replace('.', ', ') + s.player.handle.toUpperCase() + '.'),
+                    h('div', { class: 'hub-sub dim' }, 'Select a service. The network shows what your standing allows.')),
+                h('div', { class: 'hub-meta' },
+                    h('div', { class: 'meta-cell ' + tcls(st.tier) }, h('span', { class: 'lbl' }, 'NETWORK ACCESS'), h('b', { class: 'meta-tier' }, st.tier)),
+                    s.heat ? h('div', { class: 'meta-cell is-wide' }, heatMeter(true)) : null));
 
-            var hero = h('section', { class: 'hero ' + tcls(st.tier) },
-                h('div', { class: 'hero-main' },
-                    h('div', { class: 'lbl' }, 'NETWORK · ', h('span', { class: 'mono' }, s.player.handle.toUpperCase())),
-                    h('h1', null, greeting()),
-                    h('div', { class: 'hero-chips' },
-                        chip('ACCESS', st.tier, tierVar(st.tier)),
-                        chip('THIS WEEK', '+' + money(weekSum), 'var(--net-ok)'),
-                        chip('SUCCESS', Math.round(rate * 100) + '%', 'var(--t-b)'),
-                        chip('STREAK', String(stats.streak || 0), 'var(--t-a)'))),
-                s.heat ? heatMeter() : null);
+            var tiles = h('div', { class: 'svc-grid' }, services(s).map(function (x, i) { return serviceTile(x, i); }));
 
-            var available = s.offer
-                ? panel('card card-available is-offer ' + tcls('X'), label('AVAILABLE'), h('div', { class: 'big-count' }, h('b', null, '1'), h('span', null, 'PRIVATE OFFER')),
-                    h('p', { class: 'dim' }, 'Source unknown. This opportunity will not remain available.'),
-                    h('div', { class: 'card-foot' }, h('span'), link('REVIEW', function () { go('dossier', s.offer.id); })))
-                : panel('card card-available', h('div', { class: 'row-between' }, label('AVAILABLE'), link('VIEW ALL', function () { go('contracts'); })),
-                    h('div', { class: 'big-count' }, bound('b', 'mono', function (s) { return pad(s.contracts.length); }), h('span', null, 'CONTRACTS')),
-                    h('div', { class: 'mini-list' }, s.contracts.slice(0, 3).map(function (c) {
-                        return h('button', { class: 'mini ' + tcls(c.tier), onClick: function () { go('dossier', c.id); } },
-                            tierBadge(c.tier, 'is-sm'), h('span', { class: 'mono code' }, c.code),
-                            h('span', { class: 'dim sm' }, (c.area && c.area.name) || ''), h('span', { class: 'mono sm r' }, payout(c.payout)));
-                    })),
-                    !s.contracts.length ? h('div', { class: 'dim' }, 'Nothing right now') : null);
+            var result = s.result ? h('button', { class: 'panel strip is-' + s.result.outcome, onClick: function () { go('report', s.result.id); } },
+                h('span', { class: 'strip-tag mono' }, s.result.outcome === 'complete' ? '■ CONTRACT CLOSED' : '■ CONTRACT TERMINATED'),
+                h('b', { class: 'mono' }, s.result.code), h('span', { class: 'link' }, h('span', null, 'VIEW REPORT'), glyph('arrow'))) : null;
 
-            var rep = panel('card card-rep ' + tcls(st.tier), label('REPUTATION'), standingBlock(s, true));
-
-            var earn = panel('card card-earn', h('div', { class: 'row-between' }, label('EARNINGS · 7 DAYS'), h('span', { class: 'mono pos' }, '+' + money(weekSum))),
-                h('div', { class: 'chart-box' }, V.bars(week.map(function (d, i) {
-                    return { value: d.v, label: ['S', 'M', 'T', 'W', 'T', 'F', 'S'][new Date(d.t).getDay()], color: i === week.length - 1 ? 'var(--net-ok)' : 'var(--t-b)', title: money(d.v) };
-                }), { height: 100 })));
-
-            var active = op ? activeCard(s) : s.lobby ? lobbyCard(s) : panel('card card-empty', h('div', { class: 'dim' }, 'No active operation'));
-
+            var log = s.history.slice(0, 5).map(function (e) {
+                return h('button', { class: 'log-line mono ' + tcls(e.tier), onClick: function () { if (e.report) go('report', e.report.id); } },
+                    h('span', { class: 'dim' }, '[' + when(e.when) + ']'), h('span', { class: 't' }, e.tier), h('b', null, e.code),
+                    h('span', { class: 'svc-name dim' }, ((service(e.service || 'boosting') || {}).name || '').split(' ')[0]),
+                    h('span', { class: 'outcome is-' + e.outcome }, e.outcome === 'complete' ? 'COMPLETED' : 'FAILED'),
+                    h('span', { class: 'r ' + (e.share ? 'pos' : 'dim') }, e.share ? '+' + money(e.share) : '—'));
+            });
             var inbox = threads(s).filter(function (t) { return t.messages.length; })
-                .sort(function (a, b) { return b.messages[b.messages.length - 1].t - a.messages[a.messages.length - 1].t; }).slice(0, 3);
-            var comms = panel('card card-comms', h('div', { class: 'row-between' }, label('COMMS', unreadTotal(s) ? h('span', { class: 'pill-count' }, String(unreadTotal(s))) : null), link('OPEN', function () { go('comms'); })),
-                inbox.length ? h('div', { class: 'list tight' }, inbox.map(threadRow)) : h('div', { class: 'dim' }, 'No messages'));
-
-            var result = s.result ? panel('card card-result is-' + s.result.outcome,
-                h('div', { class: 'row-between' },
-                    h('div', null, label(s.result.outcome === 'complete' ? 'CONTRACT CLOSED' : 'CONTRACT TERMINATED'), h('div', { class: 'op-code' }, s.result.code)),
-                    link('VIEW REPORT', function () { go('report', s.result.id); }))) : null;
+                .sort(function (a, b) { return lastMsg(b).t - lastMsg(a).t; }).slice(0, 3);
 
             return h('div', { class: 'page page-home' },
                 hero,
                 result,
-                op ? h('div', { class: 'section' }, label('ACTIVE OPERATION'), active) : null,
-                h('div', { class: 'grid-3' }, available, rep, earn),
-                op ? null : h('div', { class: 'section' }, label(s.lobby ? 'CREW ASSEMBLING' : 'ACTIVE OPERATION'), active),
+                op ? h('div', { class: 'section' }, label('ACTIVE OPERATION'), activeCard(s)) : s.lobby ? h('div', { class: 'section' }, label('CREW ASSEMBLING'), lobbyCard(s)) : null,
+                h('div', { class: 'section' }, label('SERVICES', h('span', { class: 'mono dim' }, services(s).filter(function (x) { return !x.locked; }).length + ' / ' + services(s).length + ' AUTHORIZED')), tiles),
                 s.invites.length ? h('div', { class: 'section' }, label('INVITATIONS'), h('div', { class: 'list' }, s.invites.map(inviteRow))) : null,
                 h('div', { class: 'grid-2 is-top' },
-                    h('div', { class: 'section' }, label('RECENT'), recentList(s.history.slice(0, 4))),
-                    h('div', { class: 'section' }, label('INBOX'), comms)));
+                    panel('term-panel', h('div', { class: 'row-between' }, label('ACTIVITY LOG'), link('ALL', function () { ui.profile = 'history'; go('profile'); })),
+                        log.length ? h('div', { class: 'log-lines recent' }, log) : h('div', { class: 'dim' }, 'No history yet')),
+                    panel('term-panel card-comms', h('div', { class: 'row-between' }, label('INBOX', unreadTotal(s) ? h('span', { class: 'pill-count' }, String(unreadTotal(s))) : null), link('COMMS', function () { go('comms'); })),
+                        inbox.length ? h('div', { class: 'list tight' }, inbox.map(threadRow)) : h('div', { class: 'dim' }, 'No messages'))));
         },
     };
+
+    function serviceTile(x, i) {
+        if (x.locked) {
+            return h('div', { class: 'panel svc-tile is-locked', 'data-service': x.id },
+                h('div', { class: 'svc-top' }, h('span', { class: 'svc-idx mono' }, pad(i + 1)), glyph('lock')),
+                h('div', { class: 'svc-name' }, x.name),
+                h('div', { class: 'redacted mono' }, '████ ██████ ███'),
+                h('div', { class: 'svc-denied mono' }, x.lockedText || 'ACCESS DENIED'));
+        }
+        var st = x.standing || { tier: '—', points: 0, from: 0, next: 1 };
+        var frac = st.next > st.from ? (st.points - st.from) / (st.next - st.from) : 1;
+        return h('button', { class: 'panel svc-tile ' + tcls(st.tier), 'data-service': x.id, onClick: function () { go('service', x.id); } },
+            h('div', { class: 'svc-top' }, h('span', { class: 'svc-idx mono' }, pad(i + 1)), x.available ? h('span', { class: 'svc-open mono' }, '● ' + pad(x.available) + ' OPEN') : h('span', { class: 'mono dim sm' }, 'NO WORK')),
+            h('div', { class: 'svc-name dx' }, x.name),
+            h('div', { class: 'svc-blurb dim' }, x.blurb || ''),
+            h('div', { class: 'svc-rating' },
+                h('div', null, h('span', { class: 'lbl' }, 'RATING'), h('b', { class: 'svc-tier' }, st.tier)),
+                h('div', { class: 'svc-prog' },
+                    h('div', { class: 'seg-bar' }, segBar(frac, 16)),
+                    h('span', { class: 'mono dim sm' }, num(st.points, 0) + ' / ' + num(st.next, 0)))),
+            h('div', { class: 'svc-enter mono' }, '> ENTER ', h('span', { class: 'p-cursor' }, '█')));
+    }
+
+    function segBar(frac, n) {
+        var on = Math.round(Math.max(0, Math.min(1, frac)) * n), out = [];
+        for (var i = 0; i < n; i++) out.push(h('i', { class: i < on ? 'on' : '' }));
+        return out;
+    }
+
+    /* ---------------- service: rating, tier access, jobs ---------------- */
+
+    VIEWS.service = {
+        sig: function (s) { var x = service(route.id); return ['service', route.id, ui.tier, x && x.standing && x.standing.tier, !!s.offer, s.contracts.map(function (c) { return c.id + (c.fresh ? '*' : ''); }).join('.'), !!s.lobby, !!s.operation].join(); },
+        crumb: function () { return ''; },
+        build: function (s) {
+            var x = service(route.id);
+            if (x.locked) {
+                return h('div', { class: 'page page-denied' },
+                    h('div', { class: 'denied-box panel' },
+                        h('div', { class: 'denied-code mono' }, 'ERR 403'),
+                        h('div', { class: 'denied-title dx' }, 'ACCESS DENIED'),
+                        h('div', { class: 'mono dim' }, x.name + ' · ' + (x.lockedText || 'NOT AUTHORIZED')),
+                        h('p', { class: 'dim' }, 'Access to this service is granted by the network, not requested.')));
+            }
+            var mine = s.contracts.filter(function (c) { return (c.service || 'boosting') === x.id; });
+            if (mine.some(function (c) { return c.fresh; })) setTimeout(function () { backend.call('seen', {}).then(receive, function () {}); }, 1500);
+            var st = x.standing, stats = x.stats || {};
+            var nextTier = TIERS[TIERS.indexOf(st.tier) + 1];
+            var head = h('section', { class: 'svc-head ' + tcls(st.tier) },
+                h('div', { class: 'svc-head-l' },
+                    h('div', { class: 'lbl' }, 'SERVICE · ' + pad(services(s).indexOf(x) + 1)),
+                    h('h1', { class: 'dx' }, x.name),
+                    h('div', { class: 'dim' }, x.blurb || '')),
+                h('div', { class: 'svc-head-r' },
+                    h('div', { class: 'rating-box' },
+                        h('span', { class: 'lbl' }, 'YOUR RATING'),
+                        h('b', { class: 'rating-tier' }, st.tier),
+                        h('div', { class: 'seg-bar' }, segBar(st.next > st.from ? (st.points - st.from) / (st.next - st.from) : 1, 20)),
+                        h('div', { class: 'row-between mono sm' }, h('span', null, num(st.points, 0) + ' / ' + num(st.next, 0)), nextTier ? h('span', { class: 'dim' }, num(Math.max(0, st.next - st.points), 0) + ' TO ' + nextTier) : null)),
+                    h('div', { class: 'access-box' },
+                        h('span', { class: 'lbl' }, 'TIER ACCESS'),
+                        h('div', { class: 'tier-row' }, (st.ladder || []).map(function (l) {
+                            return h('div', { class: 'tier-cell is-' + l.state + ' ' + tcls(l.tier) }, tierBadge(l.tier),
+                                h('span', { class: 'mono' }, { complete: 'OPEN', current: 'OPEN', locked: 'LOCKED', none: '—', available: 'AUTH' }[l.state] || ''));
+                        }))),
+                    h('div', { class: 'jobs-box' },
+                        h('span', { class: 'lbl' }, 'JOBS POSSIBLE'),
+                        h('b', { class: 'jobs-count dx' }, pad(mine.length + (s.offer && s.offer.service === x.id ? 1 : 0))),
+                        h('span', { class: 'mono dim sm' }, (stats.completed || 0) + ' DONE · ' + (stats.failed || 0) + ' FAILED'))));
+
+            if (s.offer && (s.offer.service || 'boosting') === x.id) {
+                return h('div', { class: 'page page-service' }, head,
+                    h('div', { class: 'page-offer' },
+                        h('div', { class: 'offer-count mono' }, '1 PRIVATE OFFER'),
+                        h('button', { class: 'panel offer-card', onClick: function () { go('dossier', s.offer.id); } },
+                            h('div', { class: 'lbl' }, s.offer.source || 'SOURCE UNKNOWN'),
+                            h('div', { class: 'offer-x' }, 'X'),
+                            h('p', null, 'A private contract has been offered to you.'),
+                            h('p', { class: 'dim' }, 'This opportunity will not remain available.'),
+                            h('div', { class: 'row-end' }, h('span', { class: 'link' }, h('span', null, 'REVIEW'), glyph('arrow'))))));
+            }
+            var present = TIERS.filter(function (t) { return mine.some(function (c) { return c.tier === t; }); });
+            if (ui.tier !== 'all' && present.indexOf(ui.tier) === -1) ui.tier = 'all';
+            var list = mine.filter(function (c) { return ui.tier === 'all' || c.tier === ui.tier; });
+            return h('div', { class: 'page page-service' },
+                head,
+                h('div', { class: 'row-between' },
+                    tabs([['all', 'ALL', mine.length]].concat(present.map(function (t) { return [t, t + '-CLASS', mine.filter(function (c) { return c.tier === t; }).length]; })),
+                        ui.tier, function (v) { ui.tier = v; render(true); }),
+                    button('MAP', function () { go('map'); }, 'btn-ghost btn-sm', 'map')),
+                s.operation ? h('div', { class: 'notice' }, 'An operation is active. New contracts can be taken once it closes.') : null,
+                list.length
+                    ? h('div', { class: 'feed' }, list.map(contractCard))
+                    : panel('card card-empty', h('div', null, 'No contracts at your rating right now.'), h('div', { class: 'dim sm' }, 'The network sends work as your standing allows.')));
+        },
+    };
+    VIEWS.contracts = VIEWS.service;
 
     function chip(k, v, color) {
         return h('div', { class: 'chip', style: { '--c': color } }, h('span', { class: 'chip-k' }, k), h('b', { class: 'chip-v mono' }, v));
@@ -525,38 +685,6 @@
 
     /* ---------------- 02 contracts ---------------- */
 
-    VIEWS.contracts = {
-        sig: function (s) { return ['contracts', ui.tier, !!s.offer, s.contracts.map(function (c) { return c.id + (c.fresh ? '*' : ''); }).join('.'), !!s.lobby, !!s.operation].join(); },
-        crumb: function () { return 'CONTRACTS'; },
-        build: function (s) {
-            if (s.contracts.some(function (c) { return c.fresh; })) setTimeout(function () { backend.call('seen', {}).then(receive, function () {}); }, 1500);
-            if (s.offer) {
-                return h('div', { class: 'page page-offer' },
-                    h('div', { class: 'offer-count mono' }, '1 PRIVATE OFFER'),
-                    h('button', { class: 'panel offer-card', onClick: function () { go('dossier', s.offer.id); } },
-                        h('div', { class: 'lbl' }, s.offer.source || 'SOURCE UNKNOWN'),
-                        h('div', { class: 'offer-x' }, 'X'),
-                        h('p', null, 'A private contract has been offered to you.'),
-                        h('p', { class: 'dim' }, 'This opportunity will not remain available.'),
-                        h('div', { class: 'row-end' }, h('span', { class: 'link' }, h('span', null, 'REVIEW'), glyph('arrow')))));
-            }
-            var present = TIERS.filter(function (t) { return s.contracts.some(function (c) { return c.tier === t; }); });
-            if (ui.tier !== 'all' && present.indexOf(ui.tier) === -1) ui.tier = 'all';
-            var list = s.contracts.filter(function (c) { return ui.tier === 'all' || c.tier === ui.tier; });
-            return h('div', { class: 'page' },
-                h('div', { class: 'page-head' }, h('h2', null, 'Contracts'),
-                    bound('span', 'mono dim', function (s) { return pad(s.contracts.length) + ' AVAILABLE'; })),
-                h('div', { class: 'row-between' },
-                    tabs([['all', 'ALL', s.contracts.length]].concat(present.map(function (t) { return [t, t + '-CLASS', s.contracts.filter(function (c) { return c.tier === t; }).length]; })),
-                        ui.tier, function (v) { ui.tier = v; render(true); }),
-                    button('MAP VIEW', function () { go('map'); }, 'btn-ghost btn-sm', 'map')),
-                s.operation ? h('div', { class: 'notice' }, 'An operation is active. New contracts can be taken once it closes.') : null,
-                list.length
-                    ? h('div', { class: 'feed' }, list.map(contractCard))
-                    : panel('card card-empty', h('div', null, 'No contracts right now.'), h('div', { class: 'dim sm' }, 'The network sends work as your standing allows.')));
-        },
-    };
-
     function contractCard(c) {
         return h('button', { class: 'panel contract ' + tcls(c.tier), 'data-contract': c.id, onClick: function () { go('dossier', c.id); } },
             h('div', { class: 'contract-band' }),
@@ -580,7 +708,7 @@
 
     VIEWS.dossier = {
         sig: function (s) { var c = findContract(route.id); return ['dossier', route.id, !!c, !!s.lobby && s.lobby.contract.id, !!s.operation].join(); },
-        crumb: function () { return h('button', { class: 'crumb-back', onClick: function () { go('contracts'); } }, glyph('back'), 'CONTRACTS'); },
+        crumb: function () { return ''; },
         build: function (s) {
             var c = findContract(route.id);
             var X = c.tier === 'X';
@@ -589,7 +717,8 @@
             var rows = [kv('CONTRACT', h('span', { class: 'v mono' }, c.id)), kv('CLASS', c.tier), kv('CLIENT', d.client || '—')]
                 .concat((d.rows || []).map(function (r) { return kv(r[0], r[1]); }));
 
-            var left = h('div', { class: 'dossier-main' },
+            var back = h('button', { class: 'crumb-back mono', onClick: function () { go('service', c.service || 'boosting'); } }, glyph('back'), '../' + ((service(c.service || 'boosting') || {}).name || 'CONTRACTS'));
+            var left = h('div', { class: 'dossier-main' }, back,
                 h('div', { class: 'dossier-head' }, tierBadge(c.tier, 'is-lg'), h('div', null, h('div', { class: 'lbl' }, X ? (c.source || 'SOURCE UNKNOWN') : c.tier + '-CLASS CONTRACT'), h('h2', { class: 'op-code is-lg' }, c.code))),
                 X ? null : V.photo(c.photo, c.expires - 45 * 60000),
                 d.target ? h('div', { class: 'section' }, label('TARGET DESCRIPTION'), h('p', { class: 'prose' }, d.target)) : null,
@@ -952,7 +1081,7 @@
 
     VIEWS.report = {
         sig: function (s) { return ['report', route.id, !!(s.result && s.result.id === route.id)].join(); },
-        crumb: function () { return h('button', { class: 'crumb-back', onClick: function () { go('operations'); } }, glyph('back'), 'OPERATIONS'); },
+        crumb: function () { return ''; },
         build: function (s) {
             var r = findReport(route.id);
             var pending = s.result && s.result.id === r.id;
@@ -988,10 +1117,11 @@
                 h('div', { class: 'kv is-lg' }, h('span', { class: 'k' }, 'REPUTATION'), h('span', { class: 'v mono ' + (rep.delta > 0 ? 'pos' : rep.delta < 0 ? 'neg' : 'dim') }, rep.delta > 0 ? '+' + rep.delta : rep.delta < 0 ? '−' + Math.abs(rep.delta) : '0')),
                 rep.next ? (function () {
                     var from = rep.from != null ? rep.from : rep.points;
-                    var span = rep.next - (S.standing.from || 0);
-                    var b = bar(span ? (from - S.standing.from) / span : 0, 'bar-access');
-                    if (pending) setTimeout(function () { b.firstChild.style.width = (Math.max(0, Math.min(1, (rep.points - S.standing.from) / span)) * 100).toFixed(2) + '%'; }, 250);
-                    else b.firstChild.style.width = (Math.max(0, Math.min(1, (rep.points - S.standing.from) / span)) * 100).toFixed(2) + '%';
+                    var floor = rep.fromFloor != null ? rep.fromFloor : (S.standing.from || 0);
+                    var span = rep.next - floor;
+                    var b = bar(span ? (from - floor) / span : 0, 'bar-tier');
+                    var fin = function () { b.firstChild.style.width = (Math.max(0, Math.min(1, (rep.points - floor) / span)) * 100).toFixed(2) + '%'; };
+                    if (pending) setTimeout(fin, 250); else fin();
                     return [b, h('div', { class: 'mono dim sm' }, rep.tier + ' PROGRESS    ' + num(rep.points, 0) + ' / ' + num(rep.next, 0))];
                 })() : null);
 
@@ -1157,8 +1287,16 @@
             return h('div', { class: 'ladder-row is-' + l.state + ' ' + tcls(l.tier) }, tierBadge(l.tier, 'is-sm'), right);
         });
         var hist = stats.tierHistory || [];
+        var ratings = services(s).map(function (x) {
+            if (x.locked) return h('div', { class: 'rating-row is-locked' }, h('span', { class: 'mono' }, x.name), h('span', { class: 'mono neg sm' }, 'ACCESS DENIED'));
+            var q = x.standing;
+            return h('button', { class: 'rating-row ' + tcls(q.tier), onClick: function () { go('service', x.id); } }, h('span', { class: 'mono' }, x.name), tierBadge(q.tier, 'is-sm'),
+                h('div', { class: 'seg-bar is-sm' }, segBar(q.next > q.from ? (q.points - q.from) / (q.next - q.from) : 1, 12)), h('span', { class: 'mono sm dim' }, num(q.points, 0) + ' / ' + num(q.next, 0)));
+        });
         return h('div', { class: 'grid-2 is-top' },
-            panel('ladder ' + tcls(st.tier), label('NETWORK STANDING'), ladder),
+            h('div', { class: 'stack' },
+                panel('ladder ' + tcls(st.tier), label('NETWORK STANDING'), ladder),
+                panel('term-panel', label('SERVICE RATINGS'), h('div', { class: 'ratings' }, ratings))),
             panel('card', h('div', { class: 'row-between' }, label('STANDING · 30 DAYS'), h('span', { class: 'mono pos' }, hist.length > 1 ? '+' + num(hist[hist.length - 1].v - hist[0].v, 0) : '')),
                 h('div', { class: 'chart-box is-tall' }, V.line(hist, { color: tierVar(st.tier), height: 120 })),
                 h('p', { class: 'dim sm' }, st.xAuth ? 'You hold an X authorization. It is consumed when you lead an X operation.' : 'Standing moves with every contract you lead. Crew support earns crypto, not standing.')));
@@ -1213,15 +1351,25 @@
         conn = 'connecting';
         var lines = h('div', { class: 'boot-lines mono' });
         fill(app, h('div', { class: 'boot' }, h('span', { class: 'boot-mark', html: MARK }), lines));
-        var steps = ['AUTHENTICATING', 'SESSION ' + session, 'ENCRYPTED CHANNEL'];
+        var hex = function (n) { var o = ''; for (var i = 0; i < n; i++) o += '0123456789abcdef'[Math.floor(Math.random() * 16)]; return o; };
+        var steps = [
+            ['> network --connect', ''],
+            ['route  relay-01 ' + hex(4) + ':' + hex(4) + '::' + hex(2), ' ······· OK'],
+            ['route  relay-02 ' + hex(4) + ':' + hex(4) + '::' + hex(2), ' ······· OK'],
+            ['route  relay-03 ' + hex(4) + ':' + hex(4) + '::' + hex(2), ' ······· OK'],
+            ['handshake ECDHE-P384 / AES-256-GCM', ' ······· OK'],
+            ['auth   token 0x' + hex(16), ' ······· OK'],
+            ['session ' + session, ''],
+        ];
         var t0 = Date.now();
-        steps.forEach(function (s, i) { setTimeout(function () { if (lines.isConnected) lines.append(h('div', null, s, h('span', { class: 'dim' }, i < 2 ? ' ··· OK' : ' ··· '))); }, i * 130); });
+        steps.forEach(function (s, i) { setTimeout(function () { if (lines.isConnected) lines.append(h('div', null, s[0], h('span', { class: 'dim' }, s[1]))); }, i * 70); });
+        setTimeout(function () { if (lines.isConnected) lines.append(h('div', { class: 'granted' }, 'ACCESS GRANTED')); }, steps.length * 70 + 40);
         return backend.hello().then(function (hi) {
             hello = hi;
             return backend.state();
         }).then(function (s) {
             if (!validState(s)) throw new Error('Malformed state');
-            var wait = Math.max(0, 420 - (Date.now() - t0));
+            var wait = Math.max(0, 700 - (Date.now() - t0));
             return new Promise(function (r) { setTimeout(function () { r(s); }, wait); });
         }).then(function (s) {
             S = s;

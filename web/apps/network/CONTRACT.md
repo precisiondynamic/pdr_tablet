@@ -98,7 +98,8 @@ State = {
                    { tier = 'B', state = 'current' }, { tier = 'A', state = 'locked' },
                    { tier = 'X', state = 'none' } },              -- none | available
     },
-    contracts = { Contract, … },       -- what this player's standing lets them see
+    services  = { Service, … },        -- the hub: one tile + tab per service (omit → a single generic feed)
+    contracts = { Contract, … },       -- what this player's standing lets them see (all services)
     offer     = Contract | nil,        -- X private offer; when set, the feed shows only this
     lobby     = Lobby | nil,
     operation = Operation | nil,
@@ -134,18 +135,36 @@ Thread = {
 
 Times are epoch milliseconds (`os.time() * 1000`).
 
+### Service
+
+The hub the player lands on. Each service has its own rating, and opening one shows that
+rating, the tiers it unlocks, and the jobs possible right now. The job count is computed from
+`contracts`.
+
+```lua
+Service = {
+    id = 'boosting', name = 'BOOSTING', blurb = 'Vehicle acquisition on request.',
+    standing = { tier = 'B', points = 1840, from = 1200, next = 2200, ladder = { … } },   -- same shape as State.standing
+    stats = { completed = 4, failed = 1 },                                               -- optional
+    locked = false, lockedText = 'ACCESS DENIED · REFERRAL REQUIRED',                    -- locked: shown but not enterable
+}
+```
+
+`State.standing` is the player's overall NETWORK access. Send any services you like (e.g.
+`boosting`, `retrieval`). The app has no built-in list.
+
 ### Contract
 
 What the network tells the player, and no more. **Higher tiers should reveal less.**
 
 ```lua
 Contract = {
-    id = 'CN-84F1', code = 'CERBERUS', tier = 'A', fresh = true,
+    id = 'CN-84F1', code = 'CERBERUS', tier = 'A', fresh = true, service = 'boosting',
     window = 12,                          -- minutes after the operation begins
     crew = { min = 1, max = 4 },
     payout = { amount = 36.4 } | { min = 82, max = 108 },
     fields = { { 'TARGET', 'HIGH VALUE' }, { 'AREA', 'ROCKFORD / UNKNOWN' }, … },   -- the card, in order
-    photo = { kind = 'cctv'|'crop'|'silhouette'|'none', shape = 'sports'|'super'|'sedan'|'compact'|'suv'|'van'|'muscle', cam = 'CAM 11', url = nil },
+    photo = { kind = 'cctv'|'crop'|'silhouette'|'none', shape = 'sports'|'super'|'sedan'|'compact'|'suv'|'van'|'muscle'|'person', cam = 'CAM 11', url = nil },
     area = { name = 'ROCKFORD HILLS', world = { x = -820, y = -160, r = 520 } },    -- world optional; name alone is looked up
     dossier = { client = 'BROKER 2C', target = 'One-line description…', rows = { { 'DELIVERY', 'Vehicle intact' }, … } },
     expires = ms,
@@ -207,7 +226,7 @@ Result = {
     id, outcome = 'complete'|'failed', code, tier, contractId, closed = ms, coin = 'ZNC', role,
     rows = { { 'TARGET CONDITION', '86%' }, { 'DELIVERY', 'COMPLETE' }, { 'CREW', '3' } },
     base = 18.0, adjustment = 3.6, total = 21.6, share = 8.64,      -- one ADJUSTMENT line, never itemised
-    rep = { delta = 148, from = 1840, points = 1988, tier = 'B', next = 2200 },
+    rep = { delta = 148, from = 1840, points = 1988, tier = 'B', next = 2200, fromFloor = 1200 },   -- the service's standing
     tx = 'lsx tx id' | nil,          -- from CryptoPay: "ZNC 8.64 RECEIVED" opens it in LSX
     notes = { 'Crew member disconnected. Operation continued.' },
 }

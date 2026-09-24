@@ -32,7 +32,7 @@
 
     function contract(o) {
         var c = {
-            id: o.id || hexId(), code: o.code, tier: o.tier, fresh: !!o.fresh,
+            id: o.id || hexId(), code: o.code, tier: o.tier, fresh: !!o.fresh, service: o.service || 'boosting',
             window: o.window, crew: o.crew || { min: 1, max: 4 },
             payout: o.payout, fields: o.fields, photo: o.photo || { kind: 'cctv', shape: 'sedan', cam: 'CAM 04' },
             area: o.area, dossier: o.dossier, expires: Date.now() + (o.expiresIn || 45) * MIN,
@@ -77,8 +77,36 @@
                     rows: [['SEARCH AREA', 'MIRROR PARK'], ['SECURITY', 'Factory immobilizer'], ['DELIVERY', 'Any condition']],
                 },
             }),
+            contract({
+                service: 'retrieval', code: 'LANTERN', tier: 'C', window: 30, payout: { amount: 21.5 }, fresh: true,
+                fields: [['SUBJECT', 'MALE · 30s'], ['LAST SEEN', 'DEL PERRO'], ['WINDOW', '30 MIN'], ['CREW', '2–4']], crew: { min: 2, max: 4 },
+                photo: { kind: 'cctv', shape: 'person', cam: 'CAM 21' },
+                area: { name: 'DEL PERRO', world: { x: -1550, y: -520, r: 380 } },
+                dossier: {
+                    client: 'BROKER 2C',
+                    target: 'Owes the wrong people. Moves between a pier-side bar and a motel. Rarely alone after dark.',
+                    rows: [['LAST SEEN', 'DEL PERRO PIER'], ['CONDITION', 'Unharmed'], ['DELIVERY', 'Handoff on arrival']],
+                },
+            }),
+            contract({
+                service: 'retrieval', code: 'PIGEON', tier: 'D', window: 35, payout: { amount: 9.4 },
+                fields: [['SUBJECT', 'FEMALE · 20s'], ['NAME', 'KNOWN ON ACCEPTANCE'], ['LAST SEEN', 'VESPUCCI'], ['ASSOCIATES', 'NONE KNOWN'], ['WINDOW', '35 MIN'], ['CREW', '1–2']], crew: { min: 1, max: 2 },
+                photo: { kind: 'crop', shape: 'person', cam: 'CAM 03' },
+                area: { name: 'VESPUCCI', world: { x: -1250, y: -1150, r: 320 } },
+                dossier: {
+                    client: 'LOCAL',
+                    target: 'Skipped on a small debt. Works the canal market most mornings.',
+                    rows: [['LAST SEEN', 'VESPUCCI CANALS'], ['CONDITION', 'Unharmed'], ['DELIVERY', 'Handoff']],
+                },
+            }),
         ];
     }
+
+    var SERVICES = [
+        { id: 'boosting', name: 'BOOSTING', blurb: 'Vehicle acquisition on request.', standing: { tier: 'B', points: 1840, highest: 'B' } },
+        { id: 'retrieval', name: 'PERSON RETRIEVAL', blurb: 'Locate. Acquire. Deliver.', standing: { tier: 'C', points: 620, highest: 'C' } },
+        { id: 'extraction', name: 'DATA EXTRACTION', blurb: 'No access.', locked: true, lockedText: 'ACCESS DENIED · REFERRAL REQUIRED' },
+    ];
 
     function cerberus() {
         return contract({
@@ -185,6 +213,7 @@
             player: PEOPLE.p1,
             coin: 'ZNC',
             standing: { tier: 'B', points: 1840, xAuth: false, highest: 'B' },
+            services: copy(SERVICES),
             contracts: feed(),
             offer: null,
             lobby: null,
@@ -256,24 +285,31 @@
             else emit('notice', { text: (title === 'NETWORK' ? '' : title + ' · ') + body.split('\n')[0].replace(/\.$/, '').toUpperCase() });
         };
 
-        function ladder() {
-            var st = s.standing;
+        function ladder(st, withX) {
+            var idx = function (t) { return TIERS.findIndex(function (x) { return x.tier === t; }); };
             var out = TIERS.map(function (t) {
-                var state = t.tier === st.tier ? 'current' : TIERS.findIndex(function (x) { return x.tier === t.tier; }) < TIERS.findIndex(function (x) { return x.tier === st.tier; }) ? 'complete' : 'locked';
-                return { tier: t.tier, state: state };
+                return { tier: t.tier, state: t.tier === st.tier ? 'current' : idx(t.tier) < idx(st.tier) ? 'complete' : 'locked' };
             });
-            out.push({ tier: 'X', state: st.xAuth ? 'available' : 'none' });
+            if (withX) out.push({ tier: 'X', state: st.xAuth ? 'available' : 'none' });
             return out;
         }
+        function band(tier) { return TIERS.filter(function (t) { return t.tier === tier; })[0] || TIERS[TIERS.length - 1]; }
 
         function view() {
-            var st = s.standing;
-            var band = TIERS.filter(function (t) { return t.tier === st.tier; })[0] || TIERS[TIERS.length - 1];
             var v = copy(s);
             v.now = Date.now();
-            v.standing.from = band.from;
-            v.standing.next = band.to;
-            v.standing.ladder = ladder();
+            var b = band(s.standing.tier);
+            v.standing.from = b.from; v.standing.next = b.to; v.standing.ladder = ladder(s.standing, true);
+            v.services.forEach(function (svc) {
+                svc.available = s.contracts.filter(function (c) { return c.service === svc.id; }).length + (s.offer && s.offer.service === svc.id ? 1 : 0);
+                if (!svc.standing) return;
+                var sb = band(svc.standing.tier);
+                svc.standing.from = sb.from; svc.standing.next = sb.to;
+                svc.standing.ladder = ladder(svc.standing, svc.id === 'boosting');
+                svc.standing.xAuth = svc.id === 'boosting' && s.standing.xAuth;
+                var hist = s.history.filter(function (e) { return (e.service || 'boosting') === svc.id; });
+                svc.stats = { completed: hist.filter(function (e) { return e.outcome === 'complete'; }).length, failed: hist.filter(function (e) { return e.outcome === 'failed'; }).length };
+            });
             return v;
         }
 
@@ -310,13 +346,9 @@
             s.operation = {
                 id: 'op-' + c.id, contract: c, role: L.role, started: t,
                 ends: c.window ? t + c.window * MIN : null,
-                phase: { n: 1, title: 'LOCATE TARGET' },
-                objective: 'Locate target within search area.',
-                intel: [
-                    { k: 'TARGET', v: 'Unknown', level: 'unknown' },
-                    { k: 'SECURITY', v: 'Unknown', level: 'unknown' },
-                    { k: 'TRACKING', v: 'Unknown', level: 'unknown' },
-                ],
+                phase: { n: 1, title: c.service === 'retrieval' ? 'LOCATE SUBJECT' : 'LOCATE TARGET' },
+                objective: c.service === 'retrieval' ? 'Subject last seen in the area. Confirm visually.' : 'Locate target within search area.',
+                intel: (c.service === 'retrieval' ? ['SUBJECT', 'ASSOCIATES', 'SIGNAL'] : ['TARGET', 'SECURITY', 'TRACKING']).map(function (k) { return { k: k, v: 'Unknown', level: 'unknown' }; }),
                 crew: L.members.filter(function (m) { return m.state === 'confirmed'; }).map(function (m) { return { id: m.id, handle: m.handle, tag: m.tag, online: true }; }),
                 map: { area: c.area.name, world: c.area.world || null, point: null, updated: t },
                 tracker: null, security: null, delivery: null,
@@ -347,18 +379,23 @@
             var share = +(total * mine / 100).toFixed(4);
             var support = op.role === 'support';
             var delta = outcome === 'complete' ? (support ? 0 : 148) : (support ? 0 : -42);
-            var st = s.standing, before = st.points;
-            st.points = Math.max(0, st.points + delta);
-            var band = TIERS.filter(function (t) { return t.tier === st.tier; })[0];
-            if (band && st.points >= band.to && st.tier !== 'A') { st.tier = TIERS[TIERS.indexOf(band) + 1].tier; st.highest = st.tier; }
-            else if (band && st.tier === 'A' && st.points >= band.to) st.xAuth = true;
+            var svc = s.services.filter(function (x) { return x.id === c.service; })[0];
+            var st = svc && svc.standing ? svc.standing : s.standing, before = st.points;
+            var promote = function (x) {
+                x.points = Math.max(0, x.points + delta);
+                var bb = band(x.tier);
+                if (x.points >= bb.to && x.tier !== 'A') { x.tier = TIERS[TIERS.indexOf(bb) + 1].tier; x.highest = x.tier; }
+                else if (x.tier === 'A' && x.points >= bb.to && c.service === 'boosting') s.standing.xAuth = true;
+            };
+            promote(st);
+            if (st !== s.standing) { var g = s.standing; g.points = Math.max(0, g.points + Math.round(delta / 2)); var gb = band(g.tier); if (g.points >= gb.to && g.tier !== 'A') { g.tier = TIERS[TIERS.indexOf(gb) + 1].tier; g.highest = g.tier; } }
             var r = {
                 id: 'r' + Date.now(), outcome: outcome, code: c.code, tier: c.tier, contractId: c.id, closed: Date.now(), coin: s.coin, role: op.role,
                 rows: outcome === 'complete'
-                    ? [['TARGET CONDITION', (cond != null ? cond : 90) + '%'], ['DELIVERY', 'COMPLETE'], ['CREW', String(op.crew.length)]]
-                    : [['TARGET', 'LOST'], ['CLIENT', 'WITHDRAWN']],
+                    ? [[c.service === 'retrieval' ? 'SUBJECT CONDITION' : 'TARGET CONDITION', (cond != null ? cond : 90) + '%'], ['DELIVERY', 'COMPLETE'], ['CREW', String(op.crew.length)]]
+                    : [[c.service === 'retrieval' ? 'SUBJECT' : 'TARGET', 'LOST'], ['CLIENT', 'WITHDRAWN']],
                 base: outcome === 'complete' ? base : 0, adjustment: adj, total: total, share: share,
-                rep: { delta: delta, from: before, points: st.points, tier: st.tier, next: (TIERS.filter(function (t) { return t.tier === st.tier; })[0] || {}).to },
+                rep: { delta: delta, from: before, points: st.points, tier: st.tier, next: band(st.tier).to, service: c.service, fromFloor: band(st.tier).from },
                 tx: null,   // live: the LSX transaction id from CryptoPay, so the payout deep-links into LSX
                 notes: [],
             };
@@ -366,7 +403,7 @@
             if (op.crew.some(function (m) { return !m.online; })) r.notes.push('Crew member disconnected. Operation continued.');
             if (outcome === 'failed') r.notes.push('This contract is no longer available.');
             s.result = r;
-            s.history.unshift({ id: 'h' + Date.now(), code: c.code, tier: c.tier, outcome: outcome, share: share, when: Date.now(), role: op.role, contractId: c.id, report: copy(r) });
+            s.history.unshift({ id: 'h' + Date.now(), service: c.service, code: c.code, tier: c.tier, outcome: outcome, share: share, when: Date.now(), role: op.role, contractId: c.id, report: copy(r) });
             if (outcome === 'complete') { s.stats.completed++; s.stats.delivered++; s.stats.earned = +(s.stats.earned + share).toFixed(4); s.stats.streak++; }
             else { s.stats.failed++; s.stats.streak = 0; }
             s.operation = null;
@@ -529,6 +566,17 @@
             },
             identify: function () {
                 var op = s.operation; if (!op) return;
+                if (op.contract.service === 'retrieval') {
+                    intel('SUBJECT', 'Located', 'known');
+                    intel('ASSOCIATES', 'Two present', 'alert');
+                    op.phase = { n: 2, title: 'ACQUIRE SUBJECT' };
+                    op.objective = 'Subject is not alone.';
+                    op.security = { title: 'SUBJECT PROFILE', system: 'VISUAL CONFIRMATION', hardware: 'FACIAL MATCH',
+                        lines: [['MATCH', '87%', 'known'], ['ASSOCIATES', '2', 'alert'], ['VEHICLE', 'Dark SUV', 'known']], attempt: 0, attempts: 0 };
+                    log('Subject located.'); heat(0.46); chatter('identify');
+                    notify(op.contract.code, 'Subject located.', { view: 'operation' });
+                    return;
+                }
                 intel('TARGET', 'Identified', 'known');
                 intel('SECURITY', op.contract.tier === 'X' ? '▒▒▒▒▒▒▒▒' : op.contract.tier === 'A' ? 'Aftermarket encrypted immobilizer' : 'OEM immobilizer', 'alert');
                 op.phase = { n: 2, title: 'SECURITY BYPASS' };
@@ -553,6 +601,16 @@
             },
             bypass: function () {
                 var op = s.operation; if (!op) return;
+                if (op.contract.service === 'retrieval') {
+                    intel('SUBJECT', 'In custody', 'ok');
+                    intel('SIGNAL', 'Phone active', 'alert');
+                    op.phase = { n: 3, title: 'SIGNAL' };
+                    op.objective = 'Subject’s phone is broadcasting.';
+                    op.tracker = { status: 'ACTIVE', source: 'SUBJECT PHONE', strength: -58, note: 'Find and kill the device.' };
+                    log('Subject acquired. Device signal detected.'); heat(0.74); chatter('bypass');
+                    notify(op.contract.code, 'New intelligence available.', { view: 'operation' });
+                    return;
+                }
                 if (op.security) op.security.lines.forEach(function (l) { if (l[0] === 'AUTHORIZATION') { l[1] = 'GRANTED'; l[2] = 'ok'; } });
                 intel('SECURITY', 'Bypassed', 'ok');
                 intel('TRACKING', 'Signal detected', 'alert');
@@ -573,9 +631,10 @@
             untrack: function () {
                 var op = s.operation; if (!op) return;
                 if (op.tracker) { op.tracker.status = 'CLEAR'; op.tracker.strength = null; }
-                intel('TRACKING', 'Clear', 'ok');
-                op.phase = { n: 4, title: 'DELIVERY' };
-                op.objective = 'Deliver vehicle.';
+                var R = op.contract.service === 'retrieval';
+                intel(R ? 'SIGNAL' : 'TRACKING', R ? 'Dead' : 'Clear', 'ok');
+                op.phase = { n: 4, title: R ? 'TRANSPORT' : 'DELIVERY' };
+                op.objective = R ? 'Deliver the subject. Avoid attention.' : 'Deliver vehicle.';
                 op.delivery = { condition: 86, tracking: 'CLEAR', location: 'RECEIVED', distance: 3.8, area: 'LA MESA', world: { x: 820, y: -1150 }, ends: Date.now() + 8.7 * MIN };
                 op.map = { area: 'LA MESA', world: { x: 820, y: -1150, r: 90 }, point: { x: 820, y: -1150 }, updated: Date.now() };
                 log('Tracking clear. Delivery location received.');
